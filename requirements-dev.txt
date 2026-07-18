@@ -1,0 +1,19 @@
+# universalmsig — Development Requirements
+# Install: pip install -r requirements-dev.txt
+
+# Testing
+pytest>=8.2
+pytest-asyncio>=0.23
+
+# Linting / formatting
+ruff>=0.4
+
+# Type checking
+mypy>=1.10
+
+# Optional: CoreML for backend tests with real SDK
+# coremltools>=7.0
+# numpy>=1.24
+
+# Optional: HuggingFace for live model config tests
+# huggingface_hub>=0.23

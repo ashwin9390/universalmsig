@@ -1,0 +1,15 @@
+{
+    "model": "Llama-3.2-3B",
+    "total_blocks": 28,
+    "allocation": {
+        "fast_tier": 20,
+        "cpu_tier": 8
+    },
+    "backends": [
+        "tensorrt",
+        "coreml",
+        "qnn"
+    ],
+    "precision": "fp16",
+    "status": "final_synchronized_deployment"
+}

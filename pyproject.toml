@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "universalmsig"
+version = "0.1.0"
+description = "Universal Model Signature (.msig) cross-vendor AI compiler: TensorRT, CoreML, QNN"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [{ name = "Ashwin", url = "https://github.com/ashwin9390" }]
+keywords = ["ai", "inference", "tensorrt", "coreml", "qnn", "nvidia", "apple", "qualcomm", "llm", "edge-ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Compilers",
+]
+
+# Zero hard dependencies — all vendor SDKs are optional
+dependencies = []
+
+[project.optional-dependencies]
+tensorrt = ["tensorrt>=10.0"]
+coreml   = ["coremltools>=7.0", "numpy"]
+qnn      = ["qai-hub>=0.15"]
+hf       = ["huggingface_hub>=0.23"]
+dev      = ["pytest>=8.2", "pytest-asyncio>=0.23", "ruff>=0.4", "mypy>=1.10"]
+all      = ["coremltools>=7.0", "numpy", "huggingface_hub>=0.23"]
+
+[project.scripts]
+msig-translate = "universalmsig.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ashwin9390/universalmsig"
+Issues   = "https://github.com/ashwin9390/universalmsig/issues"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["universalmsig*"]
+
+[tool.ruff]
+line-length    = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version        = "3.12"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

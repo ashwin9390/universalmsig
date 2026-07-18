@@ -1,0 +1,94 @@
+# universalmsig — Requirements
+# ══════════════════════════════════════════════════════════════════════
+#
+# CORE (zero hard dependencies — library works with just Python 3.11+)
+# ══════════════════════════════════════════════════════════════════════
+# None required. Install and run immediately:
+#   pip install -e .
+#   msig-translate --model Qwen/Qwen2.5-0.5B --target all
+
+
+# ══════════════════════════════════════════════════════════════════════
+# OPTIONAL — Install what you need for your target platform
+# ══════════════════════════════════════════════════════════════════════
+
+# ── HuggingFace model download (live config fetch) ───────────────────
+# Enables: msig-translate --model any/hf-model  (without --dummy flag)
+# huggingface_hub>=0.23
+
+# ── NVIDIA TensorRT (real .engine compilation) ────────────────────────
+# Requires: NVIDIA GPU + CUDA 12.x
+# Test on:  Google Colab T4 GPU runtime (free)
+# tensorrt>=10.0
+
+# ── Apple CoreML (real .mlpackage compilation) ────────────────────────
+# Compilation works on Linux; execution needs macOS 13+ / iOS 16+
+# Test on:  GitHub Actions macos-latest runner (free)
+# coremltools>=7.0
+# numpy>=1.24
+
+# ── Qualcomm AI Hub (real Snapdragon hardware test) ───────────────────
+# Requires: free account at https://aihub.qualcomm.com
+# export QAI_HUB_API_TOKEN=your_token
+# qai-hub>=0.15
+
+# ── Development / testing ─────────────────────────────────────────────
+# pytest>=8.2
+# ruff>=0.4
+# mypy>=1.10
+
+
+# ══════════════════════════════════════════════════════════════════════
+# INSTALL COMMANDS
+# ══════════════════════════════════════════════════════════════════════
+
+# Minimum (no vendor SDKs — all 43 tests pass, all config JSONs produced):
+#   pip install -e .
+
+# With CoreML support (works on Linux + macOS):
+#   pip install -e ".[coreml]"
+#   — OR —
+#   pip install coremltools numpy
+
+# With HuggingFace live download:
+#   pip install -e ".[hf]"
+#   — OR —
+#   pip install huggingface_hub
+
+# With TensorRT (needs NVIDIA GPU):
+#   pip install -e ".[tensorrt]"
+#   — OR —
+#   pip install tensorrt
+
+# With Qualcomm AI Hub:
+#   pip install -e ".[qnn]"
+#   — OR —
+#   pip install qai-hub
+
+# Everything at once:
+#   pip install -e ".[all]"
+#   — OR —
+#   pip install coremltools numpy huggingface_hub
+
+# Development tools:
+#   pip install -e ".[dev]"
+#   — OR —
+#   pip install pytest ruff mypy
+
+
+# ══════════════════════════════════════════════════════════════════════
+# GOOGLE COLAB — recommended install sequence
+# ══════════════════════════════════════════════════════════════════════
+
+# !git clone https://github.com/YOUR_USERNAME/universalmsig
+# %cd universalmsig
+# !pip install -e .
+# !pip install tensorrt        # for real .engine on T4 GPU
+# !pip install coremltools     # for CoreML compilation on Linux
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PYTHON VERSION
+# ══════════════════════════════════════════════════════════════════════
+# Python >= 3.11 required
+# Tested on: 3.11, 3.12
