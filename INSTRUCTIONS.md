@@ -23,6 +23,7 @@ Works fully offline (no model downloads, no internet needed).
 
 ## FILE STRUCTURE AFTER UNZIP
 ```
+universalmsig/
 ├── universalmsig/
 │   ├── core/
 │   │   ├── signature.py        # ModelSignature format (.msig v2)
