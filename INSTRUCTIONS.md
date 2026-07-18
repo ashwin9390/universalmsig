@@ -23,27 +23,26 @@ Works fully offline (no model downloads, no internet needed).
 
 ## FILE STRUCTURE AFTER UNZIP
 
-  universalmsig/
-  ├── universalmsig/
-  │   ├── core/
-  │   │   ├── signature.py        ← ModelSignature format (.msig v2)
-  │   │   └── parser.py           ← HF config → ModelSignature builder
-  │   ├── backends/
-  │   │   ├── base.py             ← BaseBackend abstract class
-  │   │   ├── tensorrt_backend.py ← NVIDIA TensorRT / TRT-LLM backend
-  │   │   ├── coreml_backend.py   ← Apple CoreML / ANE backend
-  │   │   └── qnn_backend.py      ← Qualcomm QNN / AI Hub backend
-  │   ├── translator.py           ← MSigTranslator routing engine
-  │   └── cli.py                  ← msig-translate CLI entry point
-  ├── tests/
-  │   └── test_universalmsig.py   ← 51 tests, all offline
-  ├── universalmsig_demo.ipynb    ← Google Colab notebook (13 cells)
-  ├── .github/workflows/ci.yml    ← CI (Linux + macOS runners)
-  ├── TEST_RESULTS.txt            ← Pre-run test results (51/51 PASS)
-  ├── INSTRUCTIONS.md             ← This file
-  ├── README.md
-  ├── pyproject.toml
-  └── LICENSE
+├── universalmsig/
+│   ├── core/
+│   │   ├── signature.py        # ModelSignature format (.msig v2)
+│   │   └── parser.py           # HF config → ModelSignature builder
+│   ├── backends/
+│   │   ├── base.py             # BaseBackend abstract class
+│   │   ├── tensorrt_backend.py # NVIDIA TensorRT / TRT-LLM backend
+│   │   ├── coreml_backend.py   # Apple CoreML / ANE backend
+│   │   └── qnn_backend.py      # Qualcomm QNN / AI Hub backend
+│   ├── translator.py           # MSigTranslator routing engine
+│   └── cli.py                  # msig-translate CLI entry point
+├── tests/
+│   └── test_universalmsig.py   # 51 tests, all offline
+├── universalmsig_demo.ipynb    # Google Colab notebook (13 cells)
+├── .github/workflows/ci.yml    # CI (Linux + macOS runners)
+├── TEST_RESULTS.txt            # Pre-run test results (51/51 PASS)
+├── INSTRUCTIONS.md             # This file
+├── README.md
+├── pyproject.toml
+└── LICENSE
 
 
 ----------------------------------------------------------
