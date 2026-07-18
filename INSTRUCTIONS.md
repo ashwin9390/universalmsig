@@ -22,7 +22,7 @@ Works fully offline (no model downloads, no internet needed).
 
 
 ## FILE STRUCTURE AFTER UNZIP
-
+```
 ├── universalmsig/
 │   ├── core/
 │   │   ├── signature.py        # ModelSignature format (.msig v2)
@@ -44,7 +44,7 @@ Works fully offline (no model downloads, no internet needed).
 ├── pyproject.toml
 └── LICENSE
 
-
+```
 ----------------------------------------------------------
 ## OPTION A — LOCAL MACHINE (Linux / macOS / Windows WSL2)
 ----------------------------------------------------------
