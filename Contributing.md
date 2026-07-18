@@ -56,5 +56,5 @@ python tests/test_universalmsig.py -v
 
 ---
 
-*By contributing, you agree that your contributions will be licensed under the project's [Apache License 2.0](https://www.google.com/search?q=LICENSE).*
+*By contributing, you agree that your contributions will be licensed under the project's [Apache License 2.0](https://github.com/ashwin9390/universalmsig/blob/main/LICENSE).*
 
