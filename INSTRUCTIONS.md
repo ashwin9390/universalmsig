@@ -1,7 +1,14 @@
-# universalmsig — Complete Instructions
-# Universal Model Signature (.msig) Cross-Vendor AI Compiler
-# TensorRT (NVIDIA) + CoreML (Apple) + QNN (Qualcomm)
-# ══════════════════════════════════════════════════════════════════════
+# universalmsig
+
+**Universal Model Signature (.msig) — Cross-Vendor AI Compiler**
+
+*One unified model description → TensorRT (NVIDIA) + CoreML (Apple) + QNN (Qualcomm).*
+
+
+## Overview
+`universalmsig` enables developers to deploy AI models across heterogeneous hardware with a single, vendor-neutral signature. Eliminate recompilation, bypass vendor lock-in, and standardize your deployment pipeline.
+
+---
 
 ## WHAT THIS PROJECT DOES
 
@@ -39,9 +46,9 @@ Works fully offline (no model downloads, no internet needed).
   └── LICENSE
 
 
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 ## OPTION A — LOCAL MACHINE (Linux / macOS / Windows WSL2)
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 
 ### Requirements
   - Python 3.11 or 3.12
@@ -111,9 +118,9 @@ Works fully offline (no model downloads, no internet needed).
   done
 
 
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 ## OPTION B — GOOGLE COLAB (recommended for TensorRT on T4 GPU)
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 
 ### Step 1 — Open the notebook
   Go to: https://colab.research.google.com
@@ -155,9 +162,9 @@ Works fully offline (no model downloads, no internet needed).
   ⚠  QNN real hardware needs AI Hub token (see Option D)
 
 
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 ## OPTION C — GITHUB (push and let CI test automatically)
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 
 ### Step 1 — Create GitHub repo
   Go to https://github.com/new
@@ -228,9 +235,9 @@ Works fully offline (no model downloads, no internet needed).
     - Snapdragon 8s Gen 3
 
 
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 ## PYTHON API (use in your own code)
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 
   from universalmsig import MSigTranslator, build_signature, Precision
 
@@ -276,9 +283,9 @@ Works fully offline (no model downloads, no internet needed).
   sig = build_signature("Qwen/Qwen2.5-0.5B", offline=False)
 
 
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 ## SUPPORTED MODELS (offline, no download)
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 
   Model                                   Layers  Hidden  Heads  KV  Params
   ──────────────────────────────────────────────────────────────────────────
@@ -295,9 +302,9 @@ Works fully offline (no model downloads, no internet needed).
     msig-translate --model YOUR_ORG/YOUR_MODEL --target all
 
 
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 ## INSTALL VENDOR SDKs (optional — for real hardware compilation)
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 
   # NVIDIA TensorRT (requires NVIDIA GPU + CUDA 12.x)
   pip install tensorrt
@@ -318,9 +325,9 @@ Works fully offline (no model downloads, no internet needed).
   pip install -e ".[qnn]"           # qai-hub
 
 
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 ## TROUBLESHOOTING
-══════════════════════════════════════════════════════════════════════
+----------------------------------------------------------
 
   Q: msig-translate not found after pip install -e .
   A: Make sure you're in the right directory:
@@ -380,3 +387,6 @@ Works fully offline (no model downloads, no internet needed).
 
   7 models × 3 backends = 21 combinations tested — all SUCCESS
   Runtime: 0.163 seconds (fully offline)
+
+## License
+This project is licensed under the [Apache License 2.0](https://github.com/ashwin9390/universalmsig/blob/main/LICENSE).
