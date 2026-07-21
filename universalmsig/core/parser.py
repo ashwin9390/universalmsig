@@ -141,9 +141,19 @@ def build_signature(
         if model_id in OFFLINE_SPECS:
             cfg = OFFLINE_SPECS[model_id]
         else:
-            # Best-effort: use Qwen2.5-0.5B spec as template
-            cfg = OFFLINE_SPECS["Qwen/Qwen2.5-0.5B"].copy()
-            cfg["_is_template"] = True
+            # No config could be resolved for this model. Silently substituting a
+            # template would produce a signature for the wrong architecture while
+            # claiming this model_id, so fail loudly instead.
+            hint = (
+                "no config fetched from HuggingFace (is huggingface_hub installed? "
+                "is the repo id correct?)"
+                if not offline else
+                "offline mode is on, so no download was attempted (CLI: pass --online)"
+            )
+            raise ValueError(
+                f"Unknown model {model_id!r}: not in the built-in offline registry "
+                f"and {hint}. Built-in models: {', '.join(OFFLINE_SPECS)}"
+            )
 
     num_layers   = int(cfg.get("num_hidden_layers", 24))
     hidden_size  = int(cfg.get("hidden_size", 896))

@@ -164,6 +164,11 @@ class TestModelSignature(unittest.TestCase):
         self.assertIn("Qwen", s)
         self.assertIn("24", s)
 
+    def test_unknown_model_raises(self):
+        """Unknown model IDs must fail loudly, not silently become a Qwen template."""
+        with self.assertRaises(ValueError):
+            build_signature("not-a-real/model-id", offline=True)
+
     def test_all_offline_models_build(self):
         for model_id in OFFLINE_SPECS:
             with self.subTest(model=model_id):
