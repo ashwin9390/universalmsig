@@ -125,8 +125,8 @@ Examples:
             for backend, info in plan["backends"].items():
                 print(f"  [{backend.upper()}]")
                 print(f"    Would produce : {info['would_produce']}")
-                print(f"    Fast layers   : {info['fast_layers']}")
-                print(f"    CPU layers    : {info['cpu_layers']}")
+                print(f"    Fast blocks   : {info['fast_blocks']}")
+                print(f"    CPU blocks    : {info['cpu_blocks']}")
                 print(f"    Weight        : {info['weight_gb']} GB")
                 print(f"    KV-cache      : {info['kv_cache_mb']} MB")
                 for w in info.get("warnings", []):

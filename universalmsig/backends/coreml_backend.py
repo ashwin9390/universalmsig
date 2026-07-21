@@ -311,7 +311,8 @@ class CoreMLBackend(BaseBackend):
             "    x = mb.gather(x=embed_w, indices=input_ids, axis=0)",
         ]
 
-        npu_boundary = int(sig.total_layers * sig.npu_split_ratio)
+        # Boundary from the signature's stored tiers, not re-derived from the ratio
+        npu_boundary = sig.npu_block_count
         for i in range(min(sig.total_layers, 3)):
             tier = "GPU_FAST (ANE)" if i < npu_boundary else "CPU_FALLBACK"
             lines += [

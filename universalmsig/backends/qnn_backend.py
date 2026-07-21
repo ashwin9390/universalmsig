@@ -194,11 +194,12 @@ class QNNBackend(BaseBackend):
             "backendConfig": {"engine": "QNN_BACKEND_HTP"},
         })
 
-        # Transformer layers
+        # Transformer layers — engine follows the tier stored in the signature
+        # (previously recomputed with int() truncation, which disagreed with the
+        # parser's ceil() and pushed the boundary block onto the wrong engine).
+        htp_blocks = sig.npu_block_count
         for i in range(sig.total_layers):
-            engine = ("QNN_BACKEND_HTP"
-                      if i < int(sig.total_layers * sig.npu_split_ratio)
-                      else "QNN_BACKEND_CPU")
+            engine = "QNN_BACKEND_HTP" if i < htp_blocks else "QNN_BACKEND_CPU"
 
             gqa_ratio  = sig.num_heads // sig.num_kv_heads if sig.num_kv_heads > 0 else 1
             is_gqa     = sig.num_kv_heads < sig.num_heads
@@ -319,8 +320,8 @@ class QNNBackend(BaseBackend):
                 "spill_fill_bufsize":    128 * 1024 * 1024,  # 128 MB
             },
             "msig_layer_routing": {
-                "htp_layers":  int(sig.total_layers * sig.npu_split_ratio),
-                "cpu_layers":  len(sig.cpu_layers),
+                "htp_blocks":  sig.npu_block_count,
+                "cpu_blocks":  sig.cpu_block_count,
                 "split_ratio": sig.npu_split_ratio,
             },
             "content_hash": sig.content_hash,

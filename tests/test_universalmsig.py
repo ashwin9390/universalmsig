@@ -194,8 +194,11 @@ class TestTensorRTBackend(unittest.TestCase):
     def test_dry_run(self):
         plan = self.backend.dry_run(self.sig)
         self.assertEqual(plan["backend"], "tensorrt")
-        self.assertIn("fast_layers", plan)
+        self.assertIn("fast_blocks", plan)
         self.assertIn("weight_gb", plan)
+        # blocks must sum to total transformer blocks — units must not mix
+        self.assertEqual(plan["fast_blocks"] + plan["cpu_blocks"],
+                         self.sig.total_layers)
 
     def test_compile_produces_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -372,9 +375,12 @@ class TestQNNBackend(unittest.TestCase):
             with open(result.output_path) as f:
                 topo = json.load(f)
             routing = topo["msig_layer_routing"]
-            self.assertIn("htp_layers", routing)
-            self.assertIn("cpu_layers", routing)
-            self.assertGreater(routing["htp_layers"], 0)
+            self.assertIn("htp_blocks", routing)
+            self.assertIn("cpu_blocks", routing)
+            self.assertGreater(routing["htp_blocks"], 0)
+            # 17 + 7 = 24 for Qwen 0.5B — counts must be blocks and add up
+            self.assertEqual(routing["htp_blocks"] + routing["cpu_blocks"],
+                             self.sig.total_layers)
 
     def test_gqa_broadcast_nodes_present_for_qwen(self):
         """
@@ -482,6 +488,28 @@ class TestMSigTranslator(unittest.TestCase):
         models = list_supported_models()
         self.assertGreater(len(models), 3)
         self.assertIn("Qwen/Qwen2.5-0.5B", models)
+
+    def test_split_boundary_consistent_across_backends(self):
+        """Every artifact must agree with the signature: 17 fast blocks for
+        Qwen 0.5B (ceil(24*0.7)), and QNN layer 16 on HTP like the signature
+        says — previously int() truncation put it on CPU."""
+        sig = build_signature("Qwen/Qwen2.5-0.5B", offline=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            TensorRTBackend().compile(sig, tmp)
+            QNNBackend().compile(sig, tmp)
+            safe = "qwen_qwen2.5_0.5b"
+            with open(os.path.join(tmp, f"{safe}_trtllm_config.json")) as f:
+                trtllm = json.load(f)
+            with open(os.path.join(tmp, f"{safe}_qnn_topology.json")) as f:
+                topo = json.load(f)
+        self.assertEqual(trtllm["msig_layer_split"]["gpu_boundary_block"], 17)
+        self.assertEqual(trtllm["msig_layer_split"]["cpu_offload_blocks"], 7)
+        self.assertEqual(topo["msig_layer_routing"]["htp_blocks"], 17)
+        boundary_attn = [n for n in topo["graph"]["nodes"]
+                         if n["name"] == "layer_16_self_attn"][0]
+        self.assertEqual(boundary_attn["backendConfig"]["engine"],
+                         "QNN_BACKEND_HTP",
+                         "layer 16 is gpu_fast in the signature; QNN must agree")
 
     def test_all_models_all_backends(self):
         """Every offline model should compile to every backend without error."""

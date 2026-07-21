@@ -121,6 +121,19 @@ class ModelSignature:
         ]
 
     @property
+    def npu_block_count(self) -> int:
+        """Number of transformer BLOCKS on the fast tier, derived from the
+        per-layer tiers stored in this signature — the single source of truth.
+        Backends must use this instead of re-deriving the boundary from
+        npu_split_ratio (ceil vs int truncation gave different answers)."""
+        return len([l for l in self.npu_layers if l.is_attention])
+
+    @property
+    def cpu_block_count(self) -> int:
+        """Number of transformer BLOCKS on the CPU fallback tier."""
+        return len([l for l in self.cpu_layers if l.is_attention])
+
+    @property
     def transformer_layers(self) -> list[LayerSignature]:
         """All transformer sub-layers (attention + MLP), excluding embed and lm_head."""
         return [
