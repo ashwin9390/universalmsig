@@ -483,6 +483,27 @@ class TestMSigTranslator(unittest.TestCase):
         self.assertGreater(len(models), 3)
         self.assertIn("Qwen/Qwen2.5-0.5B", models)
 
+    def test_backend_exception_becomes_failed_result(self):
+        """A backend that raises must produce success=False, not crash the
+        run — previously success was hardwired True and the CLI's failure
+        counter was dead code."""
+        class BoomBackend:
+            name = "boom"
+            def compile(self, sig, output_dir, **kwargs):
+                raise RuntimeError("kaboom")
+        t = MSigTranslator()
+        t._backends["boom"] = BoomBackend()
+        with tempfile.TemporaryDirectory() as tmp:
+            results = t.translate_model(
+                "Qwen/Qwen2.5-0.5B", targets=["boom", "tensorrt"],
+                output_dir=tmp, offline=True,
+            )
+        by_name = {r.backend_name: r for r in results}
+        self.assertFalse(by_name["boom"].success)
+        self.assertIn("kaboom", by_name["boom"].error)
+        self.assertTrue(by_name["tensorrt"].success,
+                        "other backends must still run after one fails")
+
     def test_all_models_all_backends(self):
         """Every offline model should compile to every backend without error."""
         models = list_supported_models()
