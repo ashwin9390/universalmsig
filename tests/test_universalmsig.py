@@ -117,6 +117,14 @@ class TestModelSignature(unittest.TestCase):
         sig = self._qwen_sig()
         self.assertGreater(sig.total_weight_bytes, 0)
 
+    def test_int4_weights_quarter_of_fp16(self):
+        """4-bit types are 0.5 bytes/element — int4 totals must be ~1/4 of fp16."""
+        s16 = build_signature("Qwen/Qwen2.5-0.5B", precision=Precision.FP16, offline=True)
+        s4  = build_signature("Qwen/Qwen2.5-0.5B", precision=Precision.INT4, offline=True)
+        ratio = s4.total_weight_bytes / s16.total_weight_bytes
+        self.assertAlmostEqual(ratio, 0.25, places=2,
+                               msg=f"int4/fp16 weight ratio should be 0.25, got {ratio:.3f}")
+
     def test_kv_cache_bytes_nonzero(self):
         sig = self._qwen_sig()
         self.assertGreater(sig.total_kv_cache_bytes, 0)
