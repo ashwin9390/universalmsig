@@ -285,8 +285,10 @@ class TestCoreMLBackend(unittest.TestCase):
     def test_gqa_unrolling_in_mil_script(self):
         """
         BUG FIX: CoreML MIL does not natively handle mismatched Q/KV head
-        dimensions. For Qwen GQA (14 Q, 2 KV), the MIL script must explicitly
-        broadcast KV heads 2→14 using mb.tile before attention matmul.
+        dimensions. For Qwen GQA (14 Q, 2 KV), the MIL script must broadcast
+        KV heads 2→14 with an INTERLEAVED repeat (reshape → tile on a new
+        axis → reshape), not a flat tile — a flat tile pairs Q heads with
+        the wrong KV heads.
         """
         with tempfile.TemporaryDirectory() as tmp:
             self.backend.compile(self.sig, tmp)
@@ -299,9 +301,11 @@ class TestCoreMLBackend(unittest.TestCase):
                           "GQA unrolling comment must be present")
             self.assertIn("GQA_RATIO", content,
                           "GQA_RATIO constant must be defined")
-            # Qwen ratio = 14/2 = 7 — the tile must use 7
-            self.assertIn("reps=[1, 7, 1, 1]", content,
-                          "mb.tile must broadcast by factor 7 for Qwen GQA")
+            # Qwen ratio = 14/2 = 7 — tiled on a dedicated axis, then collapsed
+            self.assertIn("reps=[1, 1, 7, 1, 1]", content,
+                          "mb.tile must repeat each KV head 7x on its own axis")
+            self.assertNotIn("reps=[1, 7, 1, 1]", content,
+                             "flat tile on the head axis mispairs Q and KV heads")
 
     def test_ane_cpu_routing_in_spec(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -395,6 +399,27 @@ class TestQNNBackend(unittest.TestCase):
                 f"Expected 48 GQA broadcast nodes (24 K + 24 V), got {len(broadcast_nodes)}"
             )
 
+    def test_qnn_graph_fully_wired(self):
+        """Every node input must be a declared tensor or another node's
+        output; every output must feed something or be the graph output.
+        Previously 218 tensor names were consumed but never defined."""
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.backend.compile(self.sig, tmp)
+            with open(result.output_path) as f:
+                topo = json.load(f)
+        declared = {t["name"] for t in topo["graph"]["tensors"]}
+        produced = set()
+        for n in topo["graph"]["nodes"]:
+            produced.update(n["outputNames"])
+        undefined = [i for n in topo["graph"]["nodes"] for i in n["inputNames"]
+                     if i not in declared and i not in produced]
+        self.assertEqual(undefined, [],
+                         f"undefined node inputs: {undefined[:5]}...")
+        consumed = {i for n in topo["graph"]["nodes"] for i in n["inputNames"]}
+        dangling = [o for o in produced if o not in consumed and o != "logits"]
+        self.assertEqual(dangling, [], f"dangling outputs: {dangling[:5]}...")
+        self.assertIn("logits", produced)
+
     def test_gqa_broadcast_ratio_correct(self):
         """Each broadcast node must tile by ratio = num_heads / num_kv_heads = 7."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -405,7 +430,8 @@ class TestQNNBackend(unittest.TestCase):
             broadcast_nodes = [n for n in nodes if n.get("typeName") == "Tile"]
             if broadcast_nodes:
                 multiples = broadcast_nodes[0]["params"]["multiples"]
-                # Should be [1, 1, 7, 1] for Qwen (ratio 14/2 = 7)
+                # [1, 1, 7, 1]: repeat on the dedicated axis of
+                # (hidden, kv_heads, 1, head_dim) — interleaved per KV head
                 self.assertEqual(multiples[2], 7,
                                  f"Expected GQA ratio 7, got {multiples[2]}")
 

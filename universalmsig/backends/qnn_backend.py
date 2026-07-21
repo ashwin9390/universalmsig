@@ -162,28 +162,59 @@ class QNNBackend(BaseBackend):
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _build_topology(self, sig: ModelSignature) -> dict:
-        """Build QnnGraph topology compatible with qnn-model-lib-generator."""
+        """
+        Build a QnnGraph topology in which every node input is either a
+        declared tensor or another node's output, and activations flow
+        embed → layer 0 → … → layer N-1 → final norm → lm_head → logits.
+
+        GQA is handled by expanding the K/V projection weights: the columns
+        of each KV head are repeated gqa_ratio times CONSECUTIVELY
+        (reshape → tile on a dedicated axis → reshape), which matches HF
+        repeat_kv semantics — Q head h reads KV head h // gqa_ratio. A flat
+        tile of the whole weight would interleave heads incorrectly.
+        """
         qnn_dtype = _QNN_DTYPE.get(sig.default_precision, "QNN_DATATYPE_FLOAT_16")
 
-        nodes = []
-        tensors = []
+        H         = sig.hidden_size
+        heads     = sig.num_heads
+        kv_heads  = sig.num_kv_heads
+        head_dim  = H // heads
+        q_dim     = heads * head_dim
+        kv_dim    = kv_heads * head_dim
+        inter     = H * 4
+        gqa_ratio = heads // kv_heads if kv_heads > 0 else 1
+        is_gqa    = kv_heads < heads
+        act_dims  = [1, sig.max_seq_len, H]
 
-        # Input tensor
+        nodes:   list[dict] = []
+        tensors: list[dict] = []
+
+        def static_tensor(name: str, dims: list[int]) -> None:
+            tensors.append({
+                "name": name,
+                "type": "QNN_TENSOR_TYPE_STATIC",
+                "dataType": qnn_dtype,
+                "dims": dims,
+                "quantizeParams": {"encodingType": "QNN_QUANTIZATION_ENCODING_SCALE_OFFSET"},
+            })
+
+        def native_tensor(name: str, dims: list[int]) -> None:
+            tensors.append({
+                "name": name,
+                "type": "QNN_TENSOR_TYPE_NATIVE",
+                "dataType": qnn_dtype,
+                "dims": dims,
+            })
+
+        # ── Graph input / embedding ───────────────────────────────────────────
         tensors.append({
             "name": "input_ids",
             "type": "QNN_TENSOR_TYPE_APP_WRITE",
             "dataType": "QNN_DATATYPE_INT_32",
             "dims": [1, sig.max_seq_len],
         })
-
-        # Embedding
-        tensors.append({
-            "name": "embed_weight",
-            "type": "QNN_TENSOR_TYPE_STATIC",
-            "dataType": qnn_dtype,
-            "dims": [sig.vocab_size, sig.hidden_size],
-            "quantizeParams": {"encodingType": "QNN_QUANTIZATION_ENCODING_SCALE_OFFSET"},
-        })
+        static_tensor("embed_weight", [sig.vocab_size, H])
+        native_tensor("embed_out", act_dims)
         nodes.append({
             "name": "gather_embedding",
             "packageName": "qti.aisw",
@@ -194,112 +225,177 @@ class QNNBackend(BaseBackend):
             "backendConfig": {"engine": "QNN_BACKEND_HTP"},
         })
 
-        # Transformer layers
+        # ── Transformer layers ────────────────────────────────────────────────
+        x = "embed_out"
+        htp_boundary = int(sig.total_layers * sig.npu_split_ratio)
         for i in range(sig.total_layers):
-            engine = ("QNN_BACKEND_HTP"
-                      if i < int(sig.total_layers * sig.npu_split_ratio)
-                      else "QNN_BACKEND_CPU")
+            engine = "QNN_BACKEND_HTP" if i < htp_boundary else "QNN_BACKEND_CPU"
+            L = f"layer_{i}"
 
-            gqa_ratio  = sig.num_heads // sig.num_kv_heads if sig.num_kv_heads > 0 else 1
-            is_gqa     = sig.num_kv_heads < sig.num_heads
-            head_dim   = sig.hidden_size // sig.num_heads
+            # Weights
+            static_tensor(f"{L}_attn_norm_weight", [H])
+            static_tensor(f"{L}_q_weight", [H, q_dim])
+            static_tensor(f"{L}_k_weight", [H, kv_dim])
+            static_tensor(f"{L}_v_weight", [H, kv_dim])
+            static_tensor(f"{L}_o_weight", [q_dim, H])
+            static_tensor(f"{L}_mlp_norm_weight", [H])
+            static_tensor(f"{L}_gate_weight", [H, inter])
+            static_tensor(f"{L}_up_weight", [H, inter])
+            static_tensor(f"{L}_down_weight", [inter, H])
 
-            # If GQA, insert explicit KV broadcast nodes before attention
-            if is_gqa:
-                # K broadcast: (B, S, kv_heads, head_dim) → (B, S, num_heads, head_dim)
-                nodes.append({
-                    "name":         f"layer_{i}_k_broadcast",
-                    "packageName":  "qti.aisw",
-                    "typeName":     "Tile",
-                    "inputNames":   [f"layer_{i}_k_proj"],
-                    "outputNames":  [f"layer_{i}_k_expanded"],
-                    "params": {
-                        "multiples": [1, 1, gqa_ratio, 1],
-                        "_comment": (
-                            f"GQA broadcast: {sig.num_kv_heads} KV heads → "
-                            f"{sig.num_heads} Q heads (ratio {gqa_ratio}:1). "
-                            f"Required — QNN HTP cannot implicitly broadcast "
-                            f"mismatched Q/KV head dimensions during matmul."
-                        ),
-                    },
-                    "backendConfig": {"engine": engine},
-                })
-                # V broadcast
-                nodes.append({
-                    "name":        f"layer_{i}_v_broadcast",
-                    "packageName": "qti.aisw",
-                    "typeName":    "Tile",
-                    "inputNames":  [f"layer_{i}_v_proj"],
-                    "outputNames": [f"layer_{i}_v_expanded"],
-                    "params": {
-                        "multiples": [1, 1, gqa_ratio, 1],
-                        "_comment": (
-                            f"GQA V broadcast: same ratio {gqa_ratio}:1"
-                        ),
-                    },
-                    "backendConfig": {"engine": engine},
-                })
+            # Activations
+            for suffix in ("attn_normed", "attn_out", "attn_res",
+                           "mlp_normed", "mlp_out", "out"):
+                native_tensor(f"{L}_{suffix}", act_dims)
 
-            k_input = f"layer_{i}_k_expanded" if is_gqa else f"layer_{i}_k_weight"
-            v_input = f"layer_{i}_v_expanded" if is_gqa else f"layer_{i}_v_weight"
-
-            # Attention node (uses expanded KV tensors)
+            # Pre-attention norm
             nodes.append({
-                "name":        f"layer_{i}_self_attn",
+                "name": f"{L}_attn_norm",
+                "packageName": "qti.aisw",
+                "typeName": "RmsNorm",
+                "inputNames": [x, f"{L}_attn_norm_weight"],
+                "outputNames": [f"{L}_attn_normed"],
+                "params": {"epsilon": 1e-6},
+                "backendConfig": {"engine": engine},
+            })
+
+            # GQA: expand K/V projection weights with interleaved head repeats
+            k_input, v_input = f"{L}_k_weight", f"{L}_v_weight"
+            if is_gqa:
+                for kv in ("k", "v"):
+                    native_tensor(f"{L}_{kv}_weight_grouped", [H, kv_heads, 1, head_dim])
+                    native_tensor(f"{L}_{kv}_weight_tiled",   [H, kv_heads, gqa_ratio, head_dim])
+                    native_tensor(f"{L}_{kv}_weight_expanded", [H, q_dim])
+                    nodes.append({
+                        "name":        f"{L}_{kv}_group",
+                        "packageName": "qti.aisw",
+                        "typeName":    "Reshape",
+                        "inputNames":  [f"{L}_{kv}_weight"],
+                        "outputNames": [f"{L}_{kv}_weight_grouped"],
+                        "params": {"shape": [H, kv_heads, 1, head_dim]},
+                        "backendConfig": {"engine": engine},
+                    })
+                    nodes.append({
+                        "name":        f"{L}_{kv}_broadcast",
+                        "packageName": "qti.aisw",
+                        "typeName":    "Tile",
+                        "inputNames":  [f"{L}_{kv}_weight_grouped"],
+                        "outputNames": [f"{L}_{kv}_weight_tiled"],
+                        "params": {
+                            "multiples": [1, 1, gqa_ratio, 1],
+                            "_comment": (
+                                f"GQA broadcast: {kv_heads} KV heads → {heads} Q heads "
+                                f"(ratio {gqa_ratio}:1) as an INTERLEAVED repeat on a "
+                                f"dedicated axis — each KV head repeated {gqa_ratio}x "
+                                f"consecutively so Q head h maps to KV head "
+                                f"h // {gqa_ratio} (HF repeat_kv semantics). A flat "
+                                f"tile of the head axis would mispair Q and KV heads."
+                            ),
+                        },
+                        "backendConfig": {"engine": engine},
+                    })
+                    nodes.append({
+                        "name":        f"{L}_{kv}_collapse",
+                        "packageName": "qti.aisw",
+                        "typeName":    "Reshape",
+                        "inputNames":  [f"{L}_{kv}_weight_tiled"],
+                        "outputNames": [f"{L}_{kv}_weight_expanded"],
+                        "params": {"shape": [H, q_dim]},
+                        "backendConfig": {"engine": engine},
+                    })
+                k_input, v_input = f"{L}_k_weight_expanded", f"{L}_v_weight_expanded"
+
+            # Attention
+            nodes.append({
+                "name":        f"{L}_self_attn",
                 "packageName": "qti.aisw",
                 "typeName":    "ScaledDotProductAttention",
-                "inputNames":  [
-                    f"layer_{i}_attn_in",
-                    f"layer_{i}_q_weight",
-                    k_input,
-                    v_input,
-                    f"layer_{i}_o_weight",
-                ],
-                "outputNames": [f"layer_{i}_attn_out"],
+                "inputNames":  [f"{L}_attn_normed", f"{L}_q_weight",
+                                k_input, v_input, f"{L}_o_weight"],
+                "outputNames": [f"{L}_attn_out"],
                 "params": {
-                    "num_heads":         sig.num_heads,
-                    "num_kv_heads":      sig.num_heads,   # after broadcast, both equal
+                    "num_heads":         heads,
+                    "num_kv_heads":      heads,   # after broadcast, both equal
                     "head_dim":          head_dim,
                     "scale":             round(1.0 / (head_dim ** 0.5), 6),
                     "use_rope":          True,
                     "gqa_unrolled":      is_gqa,
-                    "original_kv_heads": sig.num_kv_heads,
+                    "original_kv_heads": kv_heads,
                     "gqa_ratio":         gqa_ratio,
                 },
                 "backendConfig": {"engine": engine},
             })
-
-            # MLP node
             nodes.append({
-                "name":        f"layer_{i}_mlp",
+                "name":        f"{L}_attn_residual",
+                "packageName": "qti.aisw",
+                "typeName":    "ElementWiseAdd",
+                "inputNames":  [x, f"{L}_attn_out"],
+                "outputNames": [f"{L}_attn_res"],
+                "params": {},
+                "backendConfig": {"engine": engine},
+            })
+
+            # MLP
+            nodes.append({
+                "name":        f"{L}_mlp_norm",
+                "packageName": "qti.aisw",
+                "typeName":    "RmsNorm",
+                "inputNames":  [f"{L}_attn_res", f"{L}_mlp_norm_weight"],
+                "outputNames": [f"{L}_mlp_normed"],
+                "params": {"epsilon": 1e-6},
+                "backendConfig": {"engine": engine},
+            })
+            nodes.append({
+                "name":        f"{L}_mlp",
                 "packageName": "qti.aisw",
                 "typeName":    "GatedMLP",
-                "inputNames":  [
-                    f"layer_{i}_mlp_in",
-                    f"layer_{i}_gate_weight",
-                    f"layer_{i}_up_weight",
-                    f"layer_{i}_down_weight",
-                ],
-                "outputNames": [f"layer_{i}_mlp_out"],
+                "inputNames":  [f"{L}_mlp_normed", f"{L}_gate_weight",
+                                f"{L}_up_weight", f"{L}_down_weight"],
+                "outputNames": [f"{L}_mlp_out"],
                 "params": {
-                    "hidden_size":   sig.hidden_size,
-                    "intermediate":  sig.hidden_size * 4,
+                    "hidden_size":   H,
+                    "intermediate":  inter,
                     "activation":    "silu",
                 },
                 "backendConfig": {"engine": engine},
             })
+            nodes.append({
+                "name":        f"{L}_mlp_residual",
+                "packageName": "qti.aisw",
+                "typeName":    "ElementWiseAdd",
+                "inputNames":  [f"{L}_attn_res", f"{L}_mlp_out"],
+                "outputNames": [f"{L}_out"],
+                "params": {},
+                "backendConfig": {"engine": engine},
+            })
+            x = f"{L}_out"
 
-        # LM head
+        # ── Final norm + LM head ──────────────────────────────────────────────
+        static_tensor("final_norm_weight", [H])
+        native_tensor("final_normed", act_dims)
+        static_tensor("lm_head_weight", [H, sig.vocab_size])
+        tensors.append({
+            "name": "logits",
+            "type": "QNN_TENSOR_TYPE_APP_READ",
+            "dataType": qnn_dtype,
+            "dims": [1, sig.max_seq_len, sig.vocab_size],
+        })
+        nodes.append({
+            "name": "final_norm",
+            "packageName": "qti.aisw",
+            "typeName": "RmsNorm",
+            "inputNames": [x, "final_norm_weight"],
+            "outputNames": ["final_normed"],
+            "params": {"epsilon": 1e-6},
+            "backendConfig": {"engine": "QNN_BACKEND_HTP"},
+        })
         nodes.append({
             "name": "lm_head",
             "packageName": "qti.aisw",
             "typeName": "FullyConnected",
-            "inputNames": ["transformer_out", "lm_head_weight"],
+            "inputNames": ["final_normed", "lm_head_weight"],
             "outputNames": ["logits"],
-            "params": {
-                "transpose_b": True,
-                "out_dims": [1, sig.max_seq_len, sig.vocab_size],
-            },
+            "params": {"transpose_b": False},
             "backendConfig": {"engine": "QNN_BACKEND_HTP"},
         })
 
