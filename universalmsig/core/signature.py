@@ -18,7 +18,6 @@ import struct
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 
 # ── Execution tier ────────────────────────────────────────────────────────────
