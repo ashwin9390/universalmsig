@@ -206,6 +206,7 @@ class CoreMLBackend(BaseBackend):
     def _build_mil_script(self, sig: ModelSignature) -> str:
         """Generate a runnable coremltools MIL graph Python script with correct GQA unrolling."""
         ct_dtype  = _CT_DTYPE.get(sig.default_precision, "float16")
+        inter     = sig.intermediate_size or sig.hidden_size * 4
         head_dim  = sig.hidden_size // sig.num_heads
         gqa_ratio = sig.num_heads // sig.num_kv_heads if sig.num_kv_heads > 0 else 1
         is_gqa    = sig.num_kv_heads < sig.num_heads
@@ -324,9 +325,9 @@ class CoreMLBackend(BaseBackend):
                 "    residual = x",
                 "    x = mb.layer_norm(x=x, axes=[-1])",
                 f"    # SwiGLU MLP: gate × silu + up → down",
-                f"    gate_w = mb.const(val=np.zeros(({sig.hidden_size}, {sig.hidden_size * 4}), dtype=np.float16))",
-                f"    up_w   = mb.const(val=np.zeros(({sig.hidden_size}, {sig.hidden_size * 4}), dtype=np.float16))",
-                f"    down_w = mb.const(val=np.zeros(({sig.hidden_size * 4}, {sig.hidden_size}), dtype=np.float16))",
+                f"    gate_w = mb.const(val=np.zeros(({sig.hidden_size}, {inter}), dtype=np.float16))",
+                f"    up_w   = mb.const(val=np.zeros(({sig.hidden_size}, {inter}), dtype=np.float16))",
+                f"    down_w = mb.const(val=np.zeros(({inter}, {sig.hidden_size}), dtype=np.float16))",
                 "    gate   = mb.silu(x=mb.linear(x=x, weight=gate_w))",
                 "    up     = mb.linear(x=x, weight=up_w)",
                 "    x      = mb.linear(x=mb.mul(x=gate, y=up), weight=down_w)",

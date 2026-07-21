@@ -283,7 +283,7 @@ class QNNBackend(BaseBackend):
                 "outputNames": [f"layer_{i}_mlp_out"],
                 "params": {
                     "hidden_size":   sig.hidden_size,
-                    "intermediate":  sig.hidden_size * 4,
+                    "intermediate":  sig.intermediate_size or sig.hidden_size * 4,
                     "activation":    "silu",
                 },
                 "backendConfig": {"engine": engine},
