@@ -71,12 +71,6 @@ class QNNBackend(BaseBackend):
     def validate(self, sig: ModelSignature) -> list[str]:
         warnings = self._check_precision(sig)
 
-        # QNN Hexagon HTP mandates NHWC — but transformer (B, S, H) needs no transpose
-        warnings.append(
-            "QNN HTP: Transformer layout (batch, seq, hidden) is compatible. "
-            "No NHWC transpose required for NLP models."
-        )
-
         if sig.num_kv_heads < sig.num_heads:
             warnings.append(
                 f"GQA ({sig.num_kv_heads} KV heads): QNN requires explicit "
@@ -145,6 +139,9 @@ class QNNBackend(BaseBackend):
             "aihub_job":     str(aihub_path),
             "qnn_dtype":     _QNN_DTYPE.get(sig.default_precision, "QNN_DATATYPE_FLOAT_16"),
             "htp_engine":    "Hexagon Tensor Processor (HTP)",
+            # informational, not a warning: nothing to act on
+            "layout_note":   "Transformer layout (batch, seq, hidden) is "
+                             "compatible with HTP; no NHWC transpose required",
             "aihub_job_id":  aihub_job_id or "not submitted",
             "target_device": _AIHUB_DEVICES[0],
         }

@@ -78,11 +78,6 @@ class CoreMLBackend(BaseBackend):
                 f"max_seq_len={sig.max_seq_len} exceeds Apple Neural Engine "
                 "optimal window (8192). Long context will fall back to CPU."
             )
-        # Layout check — ANE is NHWC, NLP models use (batch, seq, hidden)
-        warnings.append(
-            "Layout: Transformer uses (batch, seq, hidden) — "
-            "no NHWC transpose needed for NLP models."
-        )
         return warnings
 
     def _describe_output(self) -> str:
@@ -130,6 +125,9 @@ class CoreMLBackend(BaseBackend):
             "ct_dtype":      _CT_DTYPE.get(sig.default_precision, "float16"),
             "sdk_compiled":  sdk_used,
             "runs_on":       "macOS 13+ / iOS 16+ (compilation on any platform)",
+            # informational, not a warning: nothing to act on
+            "layout_note":   "Transformer uses (batch, seq, hidden) — "
+                             "no NHWC transpose needed for NLP models",
         }
 
         return CompilationResult(

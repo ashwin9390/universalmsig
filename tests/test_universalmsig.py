@@ -324,10 +324,17 @@ class TestQNNBackend(unittest.TestCase):
     def test_name(self):
         self.assertEqual(self.backend.name, "qnn")
 
-    def test_validate_warns_layout(self):
+    def test_validate_has_no_informational_noise(self):
+        """validate() returns actionable warnings only (empty = compatible).
+        The layout note is informational and now lives in compile metadata."""
         w = self.backend.validate(self.sig)
-        self.assertTrue(any("layout" in warn.lower() or "nhwc" in warn.lower()
-                            for warn in w))
+        self.assertFalse(any("no nhwc transpose" in warn.lower() for warn in w),
+                         "informational layout note must not be a warning")
+
+    def test_layout_note_in_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.backend.compile(self.sig, tmp)
+        self.assertIn("layout_note", result.metadata)
 
     def test_compile_produces_files(self):
         with tempfile.TemporaryDirectory() as tmp:
