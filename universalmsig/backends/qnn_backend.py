@@ -126,16 +126,16 @@ class QNNBackend(BaseBackend):
         aihub = self._build_aihub_job(sig, safe_name)
         aihub_path.write_text(json.dumps(aihub, indent=2))
 
-        # ── 4. Try remote AI Hub submission ──────────────────────────────────
-        aihub_job_id = None
+        # ── 4. Check AI Hub connectivity (no job is submitted) ────────────────
+        aihub_status = "not attempted (QAI_HUB_API_TOKEN not set)"
         api_token = os.environ.get("QAI_HUB_API_TOKEN", "")
         if api_token:
-            aihub_job_id = self._submit_aihub_job(sig, topology, api_token)
-            if aihub_job_id:
-                warnings.append(f"AI Hub job submitted: {aihub_job_id}")
+            aihub_status = self._check_aihub_connection(api_token)
+            warnings.append(f"AI Hub: {aihub_status}")
         else:
             warnings.append(
-                "Set QAI_HUB_API_TOKEN env var to submit to real Snapdragon hardware. "
+                "Set QAI_HUB_API_TOKEN env var to verify AI Hub connectivity. "
+                "Submit the generated job spec yourself with qai_hub.submit_compile_job. "
                 "Free account: https://aihub.qualcomm.com"
             )
 
@@ -145,7 +145,7 @@ class QNNBackend(BaseBackend):
             "aihub_job":     str(aihub_path),
             "qnn_dtype":     _QNN_DTYPE.get(sig.default_precision, "QNN_DATATYPE_FLOAT_16"),
             "htp_engine":    "Hexagon Tensor Processor (HTP)",
-            "aihub_job_id":  aihub_job_id or "not submitted",
+            "aihub_status":  aihub_status,
             "target_device": _AIHUB_DEVICES[0],
         }
 
@@ -374,18 +374,21 @@ class QNNBackend(BaseBackend):
             ],
         }
 
-    def _submit_aihub_job(
-        self, sig: ModelSignature, topology: dict, api_token: str
-    ) -> str | None:
-        """Optionally submit to Qualcomm AI Hub if SDK + token available."""
+    def _check_aihub_connection(self, api_token: str) -> str:
+        """
+        Verify the AI Hub token/SDK work. This intentionally does NOT submit
+        a compile job — actually submitting requires real model weights,
+        which this signature-level toolchain does not have. The generated
+        *_aihub_job.json describes how to submit one manually.
+        """
         try:
             import qai_hub as hub  # type: ignore
+        except ImportError:
+            return "qai-hub SDK not installed (pip install qai-hub)"
+        try:
             hub.configure(api_token=api_token)
-            # For a real model we'd use hub.submit_compile_job(model, ...)
-            # Here we validate the connection works
             devices = hub.get_devices()
-            if devices:
-                return f"aihub_dryrun_{sig.model_id[:20]}"
-        except Exception:
-            pass
-        return None
+            return (f"connection verified, {len(devices)} devices visible; "
+                    "no job submitted")
+        except Exception as e:
+            return f"connection failed: {e}"
