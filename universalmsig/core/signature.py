@@ -79,6 +79,7 @@ class ModelSignature:
     architecture:    str   = ""          # "transformer-decoder"
     total_layers:    int   = 0
     hidden_size:     int   = 0
+    intermediate_size: int = 0           # MLP intermediate dim (0 = unknown)
     num_heads:       int   = 0
     num_kv_heads:    int   = 0
     vocab_size:      int   = 0
@@ -145,6 +146,7 @@ class ModelSignature:
             "architecture":      self.architecture,
             "total_layers":      self.total_layers,
             "hidden_size":       self.hidden_size,
+            "intermediate_size": self.intermediate_size,
             "num_heads":         self.num_heads,
             "num_kv_heads":      self.num_kv_heads,
             "vocab_size":        self.vocab_size,
@@ -210,6 +212,7 @@ class ModelSignature:
             architecture     = d.get("architecture", ""),
             total_layers     = d.get("total_layers", 0),
             hidden_size      = d.get("hidden_size", 0),
+            intermediate_size = d.get("intermediate_size", 0),
             num_heads        = d.get("num_heads", 0),
             num_kv_heads     = d.get("num_kv_heads", 0),
             vocab_size       = d.get("vocab_size", 0),
