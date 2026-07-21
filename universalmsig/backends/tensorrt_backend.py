@@ -142,7 +142,9 @@ class TensorRTBackend(BaseBackend):
                 "max_input_len":     sig.max_seq_len,
                 "max_output_len":    512,
                 "dtype":             trt_dtype,
-                "use_fp8_context_fmha": sig.default_precision == Precision.FP4,
+                # FP8 context FMHA requires an FP8 precision mode; keying it off
+                # FP4 was a typo. No FP8 precision exists in the enum, so: off.
+                "use_fp8_context_fmha": False,
                 "enable_xqa":        True,
                 "paged_kv_cache":    sig.max_seq_len > 4096,
                 "tokens_per_block":  64,

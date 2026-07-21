@@ -331,9 +331,13 @@ class QNNBackend(BaseBackend):
         layers_quant = []
         for layer in sig.layers:
             if layer.is_attention or layer.is_mlp:
+                weight_dtype = {
+                    Precision.INT8: "int8",
+                    Precision.INT4: "int4",
+                }.get(sig.default_precision, "float16")
                 layers_quant.append({
                     "layer_name":      layer.name,
-                    "weight_dtype":    "int8" if sig.default_precision == Precision.INT8 else "float16",
+                    "weight_dtype":    weight_dtype,
                     "activation_dtype":"float16",
                     "scale_type":      "per_channel",
                     "symmetric":       True,
@@ -360,11 +364,7 @@ class QNNBackend(BaseBackend):
             "task":            "inference",
             "target_devices":  _AIHUB_DEVICES,
             "input_specs":     [{"name": "input_ids", "shape": [1, 128], "dtype": "int32"}],
-            "options": {
-                "target_runtime": "onnx",
-                "quantize_full_type": "w8a16" if sig.default_precision == Precision.INT8 else "w4a16",
-                "quantize_weight_dtype": "int8" if sig.default_precision == Precision.INT8 else "int4",
-            },
+            "options": self._aihub_options(sig),
             "instructions": [
                 "1. Sign up free at https://aihub.qualcomm.com",
                 "2. pip install qai-hub",
@@ -373,6 +373,17 @@ class QNNBackend(BaseBackend):
                 "5. Results run on real Snapdragon silicon in Qualcomm's cloud",
             ],
         }
+
+    @staticmethod
+    def _aihub_options(sig: ModelSignature) -> dict:
+        """Quantization options must follow the signature's precision — a
+        float16 run previously requested w4a16/int4 quantization."""
+        options: dict = {"target_runtime": "onnx"}
+        if sig.default_precision == Precision.INT8:
+            options |= {"quantize_full_type": "w8a16", "quantize_weight_dtype": "int8"}
+        elif sig.default_precision == Precision.INT4:
+            options |= {"quantize_full_type": "w4a16", "quantize_weight_dtype": "int4"}
+        return options
 
     def _submit_aihub_job(
         self, sig: ModelSignature, topology: dict, api_token: str
