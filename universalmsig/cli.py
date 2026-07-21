@@ -102,7 +102,9 @@ Examples:
     if args.save_msig:
         model_id, path = args.save_msig
         print(f"\nBuilding signature for {model_id} …")
-        sig = translator.save_signature(model_id, path, precision=args.precision)
+        sig = translator.save_signature(model_id, path, precision=args.precision,
+                                        npu_split_ratio=args.split,
+                                        max_seq_len=args.max_seq)
         print(sig.summary())
         print(f"\nSaved → {path}")
         return
@@ -113,7 +115,9 @@ Examples:
             print("ERROR: --dry-run requires --model")
             sys.exit(1)
         targets = None if args.target == "all" else [args.target]
-        plan = translator.dry_run(args.model, targets=targets, precision=args.precision)
+        plan = translator.dry_run(args.model, targets=targets, precision=args.precision,
+                                  npu_split_ratio=args.split,
+                                  max_seq_len=args.max_seq)
         if args.json_output:
             print(json.dumps(plan, indent=2))
         else:
@@ -146,6 +150,9 @@ Examples:
     print("=" * 66)
 
     if args.file:
+        if args.precision != parser.get_default("precision"):
+            print("  note: --precision is ignored with --file — the precision "
+                  "stored in the .msig file is used")
         results = translator.translate_file(
             args.file, targets=targets, output_dir=args.out
         )
