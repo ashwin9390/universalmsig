@@ -153,10 +153,30 @@ class TestModelSignature(unittest.TestCase):
         sig = self._qwen_sig()
         b = sig.to_binary()
         self.assertEqual(len(b), 28)
-        version, layers, hidden, heads, kv, bpl = struct.unpack("=4sIIIIQ", b)
+        version, layers, hidden, heads, kv, block_bytes = struct.unpack("=4sIIIIQ", b)
         self.assertEqual(version, b"2.00")
         self.assertEqual(layers, 24)
         self.assertEqual(hidden, 896)
+
+    def test_binary_block_bytes_is_one_transformer_block(self):
+        """block_bytes must be attn+mlp of one block, not the embedding table."""
+        sig = self._qwen_sig()
+        *_, block_bytes = struct.unpack("=4sIIIIQ", sig.to_binary())
+        attn = next(l.weight_bytes for l in sig.layers if l.is_attention)
+        mlp  = next(l.weight_bytes for l in sig.layers if l.is_mlp)
+        self.assertEqual(block_bytes, attn + mlp)
+        self.assertNotEqual(block_bytes, sig.layers[0].weight_bytes,
+                            "block_bytes must not be the embedding table size")
+
+    def test_binary_roundtrip(self):
+        sig = self._qwen_sig()
+        sig2 = ModelSignature.from_binary(sig.to_binary())
+        self.assertEqual(sig2.total_layers, sig.total_layers)
+        self.assertEqual(sig2.hidden_size, sig.hidden_size)
+        self.assertEqual(sig2.num_heads, sig.num_heads)
+        self.assertEqual(sig2.num_kv_heads, sig.num_kv_heads)
+        with self.assertRaises(ValueError):
+            ModelSignature.from_binary(b"9.99" + b"\x00" * 24)
 
     def test_summary_returns_string(self):
         sig = self._qwen_sig()
