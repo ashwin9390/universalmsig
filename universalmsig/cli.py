@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from .translator import MSigTranslator, list_supported_models
 from .core.parser import OFFLINE_SPECS
