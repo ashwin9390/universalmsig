@@ -75,6 +75,10 @@ Examples:
                         help="Describe compilation plan without writing files")
     parser.add_argument("--save-msig",  nargs=2, metavar=("MODEL_ID", "PATH"),
                         help="Save .msig JSON for MODEL_ID to PATH")
+    parser.add_argument("--online",      action="store_true",
+                        help="Fetch model config from HuggingFace Hub "
+                             "(requires: pip install huggingface_hub). "
+                             "Without this flag only the built-in offline models work.")
     parser.add_argument("--list-models", action="store_true",
                         help="List all supported offline models")
     parser.add_argument("--json-output", action="store_true",
@@ -94,7 +98,7 @@ Examples:
                   f"hidden={spec['hidden_size']}  "
                   f"heads={spec['num_attention_heads']} "
                   f"(kv={spec['num_key_value_heads']})")
-        print(f"\nAll models also accept any HF model ID (requires: pip install huggingface_hub)")
+        print("\nAny other HF model ID works with --online (requires: pip install huggingface_hub)")
         return
 
     # ── save-msig ─────────────────────────────────────────────────────────────
@@ -156,15 +160,19 @@ Examples:
             args.file, targets=targets, output_dir=args.out
         )
     else:
-        results = translator.translate_model(
-            model_id        = args.model,
-            targets         = targets,
-            output_dir      = args.out,
-            precision       = args.precision,
-            npu_split_ratio = args.split,
-            max_seq_len     = args.max_seq,
-            offline         = True,
-        )
+        try:
+            results = translator.translate_model(
+                model_id        = args.model,
+                targets         = targets,
+                output_dir      = args.out,
+                precision       = args.precision,
+                npu_split_ratio = args.split,
+                max_seq_len     = args.max_seq,
+                offline         = not args.online,
+            )
+        except ValueError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
 
     print("\n" + "=" * 66)
     print("  Translation Complete")
