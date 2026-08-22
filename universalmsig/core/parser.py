@@ -71,10 +71,11 @@ OFFLINE_SPECS: dict[str, dict] = {
 }
 
 
-def _bytes_per_token(precision: Precision) -> int:
+def _bytes_per_element(precision: Precision) -> float:
+    """Storage bytes per weight element. 4-bit types pack two elements per byte."""
     return {
-        Precision.FP32: 4, Precision.FP16: 2, Precision.BF16: 2,
-        Precision.INT8: 1, Precision.INT4: 1, Precision.FP4: 1,
+        Precision.FP32: 4.0, Precision.FP16: 2.0, Precision.BF16: 2.0,
+        Precision.INT8: 1.0, Precision.INT4: 0.5, Precision.FP4: 0.5,
     }[precision]
 
 
@@ -88,21 +89,21 @@ def _estimate_layer_weight_bytes(
     intermediate_size: int = 0,
     mlp_matrices: int = 3,
 ) -> int:
-    bpe = _bytes_per_token(precision)
+    bpe = _bytes_per_element(precision)
     if is_attention:
         head_dim = hidden_size // num_heads
         q_bytes  = hidden_size * num_heads * head_dim * bpe
         k_bytes  = hidden_size * num_kv_heads * head_dim * bpe
         v_bytes  = k_bytes
         o_bytes  = num_heads * head_dim * hidden_size * bpe
-        return q_bytes + k_bytes + v_bytes + o_bytes
+        return int(q_bytes + k_bytes + v_bytes + o_bytes)
     elif is_mlp:
         # Gated MLPs (SwiGLU: gate + up + down) have 3 hidden x intermediate
         # matrices; classic 2-layer MLPs (e.g. phi-2 fc1/fc2) have 2.
         intermediate = intermediate_size or hidden_size * 4
         return hidden_size * intermediate * mlp_matrices * bpe
     else:
-        return hidden_size * hidden_size * bpe
+        return int(hidden_size * hidden_size * bpe)
 
 
 def _estimate_kv_cache_bytes(
@@ -113,8 +114,8 @@ def _estimate_kv_cache_bytes(
     precision: Precision,
 ) -> int:
     head_dim = hidden_size // max(num_heads, 1)
-    bpe = _bytes_per_token(precision)
-    return 2 * num_kv_heads * head_dim * max_seq_len * bpe  # K + V
+    bpe = _bytes_per_element(precision)
+    return int(2 * num_kv_heads * head_dim * max_seq_len * bpe)  # K + V
 
 
 def _fetch_hf_config(model_id: str) -> Optional[dict]:
@@ -172,7 +173,7 @@ def build_signature(
     layers: list[LayerSignature] = []
 
     # Embedding layer
-    emb_bytes = vocab_size * hidden_size * _bytes_per_token(precision)
+    emb_bytes = int(vocab_size * hidden_size * _bytes_per_element(precision))
     layers.append(LayerSignature(
         index        = 0,
         name         = "model.embed_tokens",
@@ -233,7 +234,7 @@ def build_signature(
         ))
 
     # LM head
-    lm_bytes = hidden_size * vocab_size * _bytes_per_token(precision)
+    lm_bytes = int(hidden_size * vocab_size * _bytes_per_element(precision))
     layers.append(LayerSignature(
         index        = len(layers),
         name         = "lm_head",
