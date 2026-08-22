@@ -145,28 +145,59 @@ class QNNBackend(BaseBackend):
 
     # ── Helpers ──────────────────────────────────────────────────────────[...]
     def _build_topology(self, sig: ModelSignature) -> dict:
-        """Build QnnGraph topology compatible with qnn-model-lib-generator."""
+        """
+        Build a QnnGraph topology in which every node input is either a
+        declared tensor or another node's output, and activations flow
+        embed → layer 0 → … → layer N-1 → final norm → lm_head → logits.
+
+        GQA is handled by expanding the K/V projection weights: the columns
+        of each KV head are repeated gqa_ratio times CONSECUTIVELY
+        (reshape → tile on a dedicated axis → reshape), which matches HF
+        repeat_kv semantics — Q head h reads KV head h // gqa_ratio. A flat
+        tile of the whole weight would interleave heads incorrectly.
+        """
         qnn_dtype = _QNN_DTYPE.get(sig.default_precision, "QNN_DATATYPE_FLOAT_16")
 
-        nodes = []
-        tensors = []
+        H         = sig.hidden_size
+        heads     = sig.num_heads
+        kv_heads  = sig.num_kv_heads
+        head_dim  = H // heads
+        q_dim     = heads * head_dim
+        kv_dim    = kv_heads * head_dim
+        inter     = H * 4
+        gqa_ratio = heads // kv_heads if kv_heads > 0 else 1
+        is_gqa    = kv_heads < heads
+        act_dims  = [1, sig.max_seq_len, H]
 
-        # Input tensor
+        nodes:   list[dict] = []
+        tensors: list[dict] = []
+
+        def static_tensor(name: str, dims: list[int]) -> None:
+            tensors.append({
+                "name": name,
+                "type": "QNN_TENSOR_TYPE_STATIC",
+                "dataType": qnn_dtype,
+                "dims": dims,
+                "quantizeParams": {"encodingType": "QNN_QUANTIZATION_ENCODING_SCALE_OFFSET"},
+            })
+
+        def native_tensor(name: str, dims: list[int]) -> None:
+            tensors.append({
+                "name": name,
+                "type": "QNN_TENSOR_TYPE_NATIVE",
+                "dataType": qnn_dtype,
+                "dims": dims,
+            })
+
+        # ── Graph input / embedding ───────────────────────────────────────────
         tensors.append({
             "name": "input_ids",
             "type": "QNN_TENSOR_TYPE_APP_WRITE",
             "dataType": "QNN_DATATYPE_INT_32",
             "dims": [1, sig.max_seq_len],
         })
-
-        # Embedding
-        tensors.append({
-            "name": "embed_weight",
-            "type": "QNN_TENSOR_TYPE_STATIC",
-            "dataType": qnn_dtype,
-            "dims": [sig.vocab_size, sig.hidden_size],
-            "quantizeParams": {"encodingType": "QNN_QUANTIZATION_ENCODING_SCALE_OFFSET"},
-        })
+        static_tensor("embed_weight", [sig.vocab_size, H])
+        native_tensor("embed_out", act_dims)
         nodes.append({
             "name": "gather_embedding",
             "packageName": "qti.aisw",
@@ -177,17 +208,42 @@ class QNNBackend(BaseBackend):
             "backendConfig": {"engine": "QNN_BACKEND_HTP"},
         })
 
-        # Transformer layers
+        # ── Transformer layers ────────────────────────────────────────────────
+        x = "embed_out"
+        htp_boundary = int(sig.total_layers * sig.npu_split_ratio)
         for i in range(sig.total_layers):
-            engine = ("QNN_BACKEND_HTP"
-                      if i < int(sig.total_layers * sig.npu_split_ratio)
-                      else "QNN_BACKEND_CPU")
+            engine = "QNN_BACKEND_HTP" if i < htp_boundary else "QNN_BACKEND_CPU"
+            L = f"layer_{i}"
 
-            gqa_ratio  = sig.num_heads // sig.num_kv_heads if sig.num_kv_heads > 0 else 1
-            is_gqa     = sig.num_kv_heads < sig.num_heads
-            head_dim   = sig.hidden_size // sig.num_heads
+            # Weights
+            static_tensor(f"{L}_attn_norm_weight", [H])
+            static_tensor(f"{L}_q_weight", [H, q_dim])
+            static_tensor(f"{L}_k_weight", [H, kv_dim])
+            static_tensor(f"{L}_v_weight", [H, kv_dim])
+            static_tensor(f"{L}_o_weight", [q_dim, H])
+            static_tensor(f"{L}_mlp_norm_weight", [H])
+            static_tensor(f"{L}_gate_weight", [H, inter])
+            static_tensor(f"{L}_up_weight", [H, inter])
+            static_tensor(f"{L}_down_weight", [inter, H])
 
-            # If GQA, insert explicit KV broadcast nodes before attention
+            # Activations
+            for suffix in ("attn_normed", "attn_out", "attn_res",
+                           "mlp_normed", "mlp_out", "out"):
+                native_tensor(f"{L}_{suffix}", act_dims)
+
+            # Pre-attention norm
+            nodes.append({
+                "name": f"{L}_attn_norm",
+                "packageName": "qti.aisw",
+                "typeName": "RmsNorm",
+                "inputNames": [x, f"{L}_attn_norm_weight"],
+                "outputNames": [f"{L}_attn_normed"],
+                "params": {"epsilon": 1e-6},
+                "backendConfig": {"engine": engine},
+            })
+
+            # GQA: expand K/V projection weights with interleaved head repeats
+            k_input, v_input = f"{L}_k_weight", f"{L}_v_weight"
             if is_gqa:
                 # K broadcast: (B, S, kv_heads, head_dim) → (B, S, num_heads, head_dim)
                 nodes.append({
