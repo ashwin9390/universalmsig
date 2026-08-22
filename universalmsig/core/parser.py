@@ -23,42 +23,49 @@ OFFLINE_SPECS: dict[str, dict] = {
         "num_hidden_layers": 24, "hidden_size": 896,
         "num_attention_heads": 14, "num_key_value_heads": 2,
         "vocab_size": 151936, "max_position_embeddings": 131072,
+        "intermediate_size": 4864,
         "model_type": "qwen2", "total_params": 494_032_896,
     },
     "Qwen/Qwen2.5-1.5B": {
         "num_hidden_layers": 28, "hidden_size": 1536,
         "num_attention_heads": 12, "num_key_value_heads": 2,
         "vocab_size": 151936, "max_position_embeddings": 131072,
+        "intermediate_size": 8960,
         "model_type": "qwen2", "total_params": 1_543_714_816,
     },
     "meta-llama/Llama-3.2-1B": {
         "num_hidden_layers": 16, "hidden_size": 2048,
         "num_attention_heads": 32, "num_key_value_heads": 8,
         "vocab_size": 128256, "max_position_embeddings": 131072,
+        "intermediate_size": 8192,
         "model_type": "llama", "total_params": 1_235_814_400,
     },
     "meta-llama/Llama-3.2-3B": {
         "num_hidden_layers": 28, "hidden_size": 3072,
         "num_attention_heads": 24, "num_key_value_heads": 8,
         "vocab_size": 128256, "max_position_embeddings": 131072,
+        "intermediate_size": 8192,
         "model_type": "llama", "total_params": 3_212_749_824,
     },
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": {
         "num_hidden_layers": 28, "hidden_size": 1536,
         "num_attention_heads": 12, "num_key_value_heads": 2,
         "vocab_size": 151936, "max_position_embeddings": 131072,
+        "intermediate_size": 8960,
         "model_type": "qwen2", "total_params": 1_781_088_256,
     },
     "microsoft/phi-2": {
         "num_hidden_layers": 32, "hidden_size": 2560,
         "num_attention_heads": 32, "num_key_value_heads": 32,
         "vocab_size": 51200, "max_position_embeddings": 2048,
+        "intermediate_size": 10240, "mlp_matrices": 2,
         "model_type": "phi", "total_params": 2_779_683_840,
     },
     "google/gemma-2b": {
         "num_hidden_layers": 18, "hidden_size": 2048,
         "num_attention_heads": 8, "num_key_value_heads": 1,
         "vocab_size": 256000, "max_position_embeddings": 8192,
+        "intermediate_size": 16384,
         "model_type": "gemma", "total_params": 2_506_172_416,
     },
 }
@@ -79,6 +86,8 @@ def _estimate_layer_weight_bytes(
     precision: Precision,
     is_attention: bool,
     is_mlp: bool,
+    intermediate_size: int = 0,
+    mlp_matrices: int = 3,
 ) -> int:
     bpe = _bytes_per_element(precision)
     if is_attention:
@@ -89,8 +98,10 @@ def _estimate_layer_weight_bytes(
         o_bytes  = num_heads * head_dim * hidden_size * bpe
         return int(q_bytes + k_bytes + v_bytes + o_bytes)
     elif is_mlp:
-        intermediate = hidden_size * 4
-        return int(hidden_size * intermediate * 2 * bpe)  # gate + up + down
+        # Gated MLPs (SwiGLU: gate + up + down) have 3 hidden x intermediate
+        # matrices; classic 2-layer MLPs (e.g. phi-2 fc1/fc2) have 2.
+        intermediate = intermediate_size or hidden_size * 4
+        return hidden_size * intermediate * mlp_matrices * bpe
     else:
         return int(hidden_size * hidden_size * bpe)
 
@@ -153,6 +164,8 @@ def build_signature(
     vocab_size   = int(cfg.get("vocab_size", 32000))
     model_type   = cfg.get("model_type", "unknown")
     total_params = int(cfg.get("total_params", 0))
+    intermediate = int(cfg.get("intermediate_size", hidden_size * 4))
+    mlp_matrices = int(cfg.get("mlp_matrices", 3))
     cap_seq      = min(max_seq_len, int(cfg.get("max_position_embeddings", 131072)))
 
     npu_boundary = int(math.ceil(num_layers * npu_split_ratio))
@@ -186,6 +199,7 @@ def build_signature(
         mlp_bytes = _estimate_layer_weight_bytes(
             hidden_size, num_heads, num_kv_heads, precision,
             is_attention=False, is_mlp=True,
+            intermediate_size=intermediate, mlp_matrices=mlp_matrices,
         )
         kv_bytes = _estimate_kv_cache_bytes(
             num_kv_heads, hidden_size, num_heads, cap_seq, precision,
@@ -239,6 +253,7 @@ def build_signature(
         architecture     = "transformer-decoder",
         total_layers     = num_layers,
         hidden_size      = hidden_size,
+        intermediate_size = intermediate,
         num_heads        = num_heads,
         num_kv_heads     = num_kv_heads,
         vocab_size       = vocab_size,

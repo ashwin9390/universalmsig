@@ -37,11 +37,13 @@ ONNX describes the raw compute graph; `.msig` maps **where each block should exe
 
 ---
 
-## 2. Verified Deployment Environment
+## 2. Test Environment
 
-- **Hardware**: NVIDIA Tesla T4 GPU (16GB GDDR6)
-- **Compute**: CUDA Available (True)
-- **Platform**: Google Colab / Linux 6.1 / Python 3.12
+- **Requirements**: Python 3.11+ only — the library and its full test suite run
+  offline on any machine, with **no GPU and no vendor SDKs** required.
+- Vendor SDK paths (TensorRT engine build, coremltools `.mlpackage`, Qualcomm
+  AI Hub) are optional extras; without them the backends emit config/spec JSON
+  and generated scripts.
 
 ---
 

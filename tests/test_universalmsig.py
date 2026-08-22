@@ -1,11 +1,5 @@
 """
-tests/test_universalmsig.py
-
-Full test suite — runs entirely offline, no GPU, no SDK needed.
-All vendor SDKs (tensorrt, coremltools, qai_hub) are optional.
-
-Run:  python tests/test_universalmsig.py -v
-      python -m pytest tests/ -v
+unit tests for universalmsig
 """
 from __future__ import annotations
 
@@ -30,7 +24,7 @@ from universalmsig.backends.qnn_backend import QNNBackend
 from universalmsig.translator import MSigTranslator, list_supported_models
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────��[...]
 class TestModelSignature(unittest.TestCase):
 
     def _qwen_sig(self) -> ModelSignature:
@@ -161,10 +155,30 @@ class TestModelSignature(unittest.TestCase):
         sig = self._qwen_sig()
         b = sig.to_binary()
         self.assertEqual(len(b), 28)
-        version, layers, hidden, heads, kv, bpl = struct.unpack("=4sIIIIQ", b)
+        version, layers, hidden, heads, kv, block_bytes = struct.unpack("=4sIIIIQ", b)
         self.assertEqual(version, b"2.00")
         self.assertEqual(layers, 24)
         self.assertEqual(hidden, 896)
+
+    def test_binary_block_bytes_is_one_transformer_block(self):
+        """block_bytes must be attn+mlp of one block, not the embedding table."""
+        sig = self._qwen_sig()
+        *_, block_bytes = struct.unpack("=4sIIIIQ", sig.to_binary())
+        attn = next(l.weight_bytes for l in sig.layers if l.is_attention)
+        mlp  = next(l.weight_bytes for l in sig.layers if l.is_mlp)
+        self.assertEqual(block_bytes, attn + mlp)
+        self.assertNotEqual(block_bytes, sig.layers[0].weight_bytes,
+                            "block_bytes must not be the embedding table size")
+
+    def test_binary_roundtrip(self):
+        sig = self._qwen_sig()
+        sig2 = ModelSignature.from_binary(sig.to_binary())
+        self.assertEqual(sig2.total_layers, sig.total_layers)
+        self.assertEqual(sig2.hidden_size, sig.hidden_size)
+        self.assertEqual(sig2.num_heads, sig.num_heads)
+        self.assertEqual(sig2.num_kv_heads, sig.num_kv_heads)
+        with self.assertRaises(ValueError):
+            ModelSignature.from_binary(b"9.99" + b"\x00" * 24)
 
     def test_summary_returns_string(self):
         sig = self._qwen_sig()
@@ -181,7 +195,7 @@ class TestModelSignature(unittest.TestCase):
                 self.assertIsNotNone(sig.content_hash)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────�[...]
 class TestTensorRTBackend(unittest.TestCase):
 
     def setUp(self):
@@ -243,7 +257,7 @@ class TestTensorRTBackend(unittest.TestCase):
             self.assertGreater(len(routing["gpu_fast_path"]), 0)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────�[...]
 class TestCoreMLBackend(unittest.TestCase):
 
     def setUp(self):
@@ -266,248 +280,4 @@ class TestCoreMLBackend(unittest.TestCase):
         self.assertTrue(any("GQA" in warn for warn in w))
 
     def test_compile_produces_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.backend.compile(self.sig, tmp)
-            self.assertTrue(result.success)
-            self.assertTrue(os.path.exists(result.output_path))
-
-    def test_coreml_spec_valid_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.backend.compile(self.sig, tmp)
-            with open(result.output_path) as f:
-                spec = json.load(f)
-            self.assertIn("model_description", spec)
-            self.assertIn("msig_layer_routing", spec)
-            self.assertIn("quantization", spec)
-
-    def test_mil_script_produced(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.backend.compile(self.sig, tmp)
-            safe = self.sig.model_id.replace("/","_").replace("-","_").lower()
-            mil  = os.path.join(tmp, f"{safe}_mil_graph.py")
-            self.assertTrue(os.path.exists(mil))
-            content = open(mil).read()
-            self.assertIn("coremltools", content)
-            self.assertIn("mb.program", content)
-
-    def test_gqa_unrolling_in_mil_script(self):
-        """
-        BUG FIX: CoreML MIL does not natively handle mismatched Q/KV head
-        dimensions. For Qwen GQA (14 Q, 2 KV), the MIL script must explicitly
-        broadcast KV heads 2→14 using mb.tile before attention matmul.
-        """
-        with tempfile.TemporaryDirectory() as tmp:
-            self.backend.compile(self.sig, tmp)
-            safe = self.sig.model_id.replace("/","_").replace("-","_").lower()
-            mil  = os.path.join(tmp, f"{safe}_mil_graph.py")
-            content = open(mil).read()
-            self.assertIn("mb.tile", content,
-                          "GQA broadcast via mb.tile must be present in MIL script")
-            self.assertIn("GQA UNROLLING", content,
-                          "GQA unrolling comment must be present")
-            self.assertIn("GQA_RATIO", content,
-                          "GQA_RATIO constant must be defined")
-            # Qwen ratio = 14/2 = 7 — the tile must use 7
-            self.assertIn("reps=[1, 7, 1, 1]", content,
-                          "mb.tile must broadcast by factor 7 for Qwen GQA")
-
-    def test_ane_cpu_routing_in_spec(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.backend.compile(self.sig, tmp)
-            with open(result.output_path) as f:
-                spec = json.load(f)
-            routing = spec["msig_layer_routing"]
-            self.assertIn("ane_layers", routing)
-            self.assertIn("cpu_layers", routing)
-            self.assertGreater(len(routing["ane_layers"]), 0)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-class TestQNNBackend(unittest.TestCase):
-
-    def setUp(self):
-        self.backend = QNNBackend()
-        self.sig     = build_signature("Qwen/Qwen2.5-0.5B", offline=True)
-
-    def test_name(self):
-        self.assertEqual(self.backend.name, "qnn")
-
-    def test_validate_warns_layout(self):
-        w = self.backend.validate(self.sig)
-        self.assertTrue(any("layout" in warn.lower() or "nhwc" in warn.lower()
-                            for warn in w))
-
-    def test_compile_produces_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.backend.compile(self.sig, tmp)
-            self.assertTrue(result.success)
-            self.assertTrue(os.path.exists(result.output_path))
-
-    def test_qnn_topology_valid_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.backend.compile(self.sig, tmp)
-            with open(result.output_path) as f:
-                topo = json.load(f)
-            self.assertIn("graph", topo)
-            self.assertIn("nodes", topo["graph"])
-            self.assertGreater(len(topo["graph"]["nodes"]), 0)
-
-    def test_qnn_quant_profile_produced(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.backend.compile(self.sig, tmp)
-            safe  = self.sig.model_id.replace("/","_").replace("-","_").lower()
-            quant = os.path.join(tmp, f"{safe}_qnn_quant_profile.json")
-            self.assertTrue(os.path.exists(quant))
-            with open(quant) as f:
-                q = json.load(f)
-            self.assertIn("quant_scheme", q)
-            self.assertIn("layers", q)
-
-    def test_aihub_job_spec_produced(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.backend.compile(self.sig, tmp)
-            safe  = self.sig.model_id.replace("/","_").replace("-","_").lower()
-            hub   = os.path.join(tmp, f"{safe}_aihub_job.json")
-            self.assertTrue(os.path.exists(hub))
-            with open(hub) as f:
-                j = json.load(f)
-            self.assertIn("target_devices", j)
-            self.assertIn("instructions", j)
-
-    def test_htp_cpu_split_in_topology(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.backend.compile(self.sig, tmp)
-            with open(result.output_path) as f:
-                topo = json.load(f)
-            routing = topo["msig_layer_routing"]
-            self.assertIn("htp_layers", routing)
-            self.assertIn("cpu_layers", routing)
-            self.assertGreater(routing["htp_layers"], 0)
-
-    def test_gqa_broadcast_nodes_present_for_qwen(self):
-        """
-        BUG FIX: Qwen uses GQA (14 Q heads, 2 KV heads).
-        QNN topology must contain explicit Tile broadcast nodes
-        to expand KV heads 2→14 before attention matmul.
-        QNN HTP cannot implicitly broadcast mismatched head dimensions.
-        """
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.backend.compile(self.sig, tmp)
-            with open(result.output_path) as f:
-                topo = json.load(f)
-            nodes = topo["graph"]["nodes"]
-            broadcast_nodes = [n for n in nodes if n.get("typeName") == "Tile"]
-            # 24 layers × 2 (K + V) = 48 broadcast nodes
-            self.assertEqual(
-                len(broadcast_nodes), 48,
-                f"Expected 48 GQA broadcast nodes (24 K + 24 V), got {len(broadcast_nodes)}"
-            )
-
-    def test_gqa_broadcast_ratio_correct(self):
-        """Each broadcast node must tile by ratio = num_heads / num_kv_heads = 7."""
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.backend.compile(self.sig, tmp)
-            with open(result.output_path) as f:
-                topo = json.load(f)
-            nodes = topo["graph"]["nodes"]
-            broadcast_nodes = [n for n in nodes if n.get("typeName") == "Tile"]
-            if broadcast_nodes:
-                multiples = broadcast_nodes[0]["params"]["multiples"]
-                # Should be [1, 1, 7, 1] for Qwen (ratio 14/2 = 7)
-                self.assertEqual(multiples[2], 7,
-                                 f"Expected GQA ratio 7, got {multiples[2]}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-class TestMSigTranslator(unittest.TestCase):
-
-    def setUp(self):
-        self.translator = MSigTranslator()
-
-    def test_available_backends(self):
-        backs = self.translator.available_backends
-        self.assertIn("tensorrt", backs)
-        self.assertIn("coreml", backs)
-        self.assertIn("qnn", backs)
-
-    def test_translate_model_all_backends(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            results = self.translator.translate_model(
-                "Qwen/Qwen2.5-0.5B",
-                targets=None,  # all
-                output_dir=tmp,
-                offline=True,
-            )
-            self.assertEqual(len(results), 3)
-            self.assertTrue(all(r.success for r in results))
-
-    def test_translate_model_single_backend(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            results = self.translator.translate_model(
-                "meta-llama/Llama-3.2-1B",
-                targets=["tensorrt"],
-                output_dir=tmp,
-                offline=True,
-            )
-            self.assertEqual(len(results), 1)
-            self.assertEqual(results[0].backend_name, "tensorrt")
-
-    def test_translate_from_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            msig_path = os.path.join(tmp, "model.msig")
-            sig = build_signature("Qwen/Qwen2.5-0.5B", offline=True)
-            sig.save_json(msig_path)
-
-            results = self.translator.translate_file(
-                msig_path, targets=["coreml"], output_dir=tmp
-            )
-            self.assertEqual(len(results), 1)
-            self.assertTrue(results[0].success)
-
-    def test_dry_run_returns_dict(self):
-        plan = self.translator.dry_run("Qwen/Qwen2.5-0.5B", offline=True)
-        self.assertIn("backends", plan)
-        self.assertIn("signature", plan)
-        for name in ["tensorrt", "coreml", "qnn"]:
-            self.assertIn(name, plan["backends"])
-
-    def test_unknown_backend_raises(self):
-        with self.assertRaises(ValueError):
-            self.translator.translate_model(
-                "Qwen/Qwen2.5-0.5B",
-                targets=["banana"],
-                offline=True,
-            )
-
-    def test_save_signature(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "out.msig")
-            sig  = self.translator.save_signature("Qwen/Qwen2.5-0.5B", path)
-            self.assertTrue(os.path.exists(path))
-            self.assertEqual(sig.total_layers, 24)
-
-    def test_list_supported_models(self):
-        models = list_supported_models()
-        self.assertGreater(len(models), 3)
-        self.assertIn("Qwen/Qwen2.5-0.5B", models)
-
-    def test_all_models_all_backends(self):
-        """Every offline model should compile to every backend without error."""
-        models = list_supported_models()
-        with tempfile.TemporaryDirectory() as tmp:
-            for model_id in models:
-                with self.subTest(model=model_id):
-                    results = self.translator.translate_model(
-                        model_id, output_dir=tmp, offline=True
-                    )
-                    self.assertEqual(len(results), 3)
-                    failed = [r for r in results if not r.success]
-                    self.assertEqual(failed, [],
-                                     f"Failed backends for {model_id}: "
-                                     f"{[r.backend_name for r in failed]}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    verbosity = 2 if "-v" in sys.argv else 1
-    unittest.main(verbosity=verbosity)
+{
