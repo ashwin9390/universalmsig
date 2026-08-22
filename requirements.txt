@@ -13,7 +13,7 @@
 # ══════════════════════════════════════════════════════════════════════
 
 # ── HuggingFace model download (live config fetch) ───────────────────
-# Enables: msig-translate --model any/hf-model  (without --dummy flag)
+# Enables live config fetch for any HF model id
 # huggingface_hub>=0.23
 
 # ── NVIDIA TensorRT (real .engine compilation) ────────────────────────

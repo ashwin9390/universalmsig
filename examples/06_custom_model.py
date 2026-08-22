@@ -1,6 +1,4 @@
-import os
-
-code = """\"\"\"
+"""
 examples/06_custom_model.py
 
 Add a custom model spec at runtime (without editing parser.py).
@@ -8,7 +6,7 @@ Useful for proprietary models or fine-tuned variants.
 
 Run:
     python examples/06_custom_model.py
-\"\"\"
+"""
 
 from universalmsig.core.signature import (
     ModelSignature, LayerSignature, ExecutionTier, Precision
@@ -97,15 +95,8 @@ results = translator.translate_signature(
     output_dir = "./output/custom_7b",
 )
 
-print("\\n=== Custom Model Translation Results ===")
+print("\
+=== Custom Model Translation Results ===")
 for r in results:
     status = "✅" if r.success else "❌"
     print(f"  {status} [{r.backend_name}] → {r.output_path}")
-"""
-
-# Make sure the directory exists and drop the script right in
-os.makedirs("examples", exist_ok=True)
-with open("examples/06_custom_model.py", "w") as f:
-    f.write(code)
-
-print("examples/06_custom_model.py successfully written directly to your environment!")
