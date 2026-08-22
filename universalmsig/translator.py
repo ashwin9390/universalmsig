@@ -6,7 +6,6 @@ Reads a ModelSignature and dispatches to one or all backends.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -101,11 +100,19 @@ class MSigTranslator:
         model_id: str,
         targets: Optional[list[str]] = None,
         precision: str = "fp16",
+        npu_split_ratio: float = 0.70,
+        max_seq_len: int = 4096,
         offline: bool = True,
     ) -> dict:
         """Describe compilation plan with no file I/O."""
         prec = Precision(precision)
-        sig  = build_signature(model_id=model_id, precision=prec, offline=offline)
+        sig  = build_signature(
+            model_id        = model_id,
+            precision       = prec,
+            npu_split_ratio = npu_split_ratio,
+            max_seq_len     = max_seq_len,
+            offline         = offline,
+        )
         use  = self._resolve_targets(targets)
         return {
             "model_id":  model_id,
@@ -160,13 +167,17 @@ class MSigTranslator:
         model_id: str,
         path: str | Path,
         precision: str = "fp16",
+        npu_split_ratio: float = 0.70,
+        max_seq_len: int = 4096,
         offline: bool = True,
     ) -> ModelSignature:
         """Build and save a .msig JSON for later use."""
         sig = build_signature(
-            model_id  = model_id,
-            precision = Precision(precision),
-            offline   = offline,
+            model_id        = model_id,
+            precision       = Precision(precision),
+            npu_split_ratio = npu_split_ratio,
+            max_seq_len     = max_seq_len,
+            offline         = offline,
         )
         sig.save_json(path)
         return sig

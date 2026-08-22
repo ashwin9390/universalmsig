@@ -1,18 +1,5 @@
 """
-universalmsig/backends/qnn_backend.py
-
-Qualcomm QNN / AI Engine Direct Backend
-========================================
-Translates a ModelSignature into:
-  1. QNN model topology JSON   (always — compatible with qnn-model-lib-generator)
-  2. QNN quantization profile  (always)
-  3. Qualcomm AI Hub job spec  (always — upload to real Snapdragon chip in the cloud)
-  4. Remote AI Hub compilation (if qai_hub SDK installed + API key set)
-
-Test on Qualcomm AI Hub (free):
-  https://aihub.qualcomm.com
-  pip install qai-hub
-  export QAI_HUB_API_TOKEN=your_token
+Update QNN backend: move informational layout note from validate() to compile() metadata.
 """
 from __future__ import annotations
 
@@ -71,12 +58,6 @@ class QNNBackend(BaseBackend):
     def validate(self, sig: ModelSignature) -> list[str]:
         warnings = self._check_precision(sig)
 
-        # QNN Hexagon HTP mandates NHWC — but transformer (B, S, H) needs no transpose
-        warnings.append(
-            "QNN HTP: Transformer layout (batch, seq, hidden) is compatible. "
-            "No NHWC transpose required for NLP models."
-        )
-
         if sig.num_kv_heads < sig.num_heads:
             warnings.append(
                 f"GQA ({sig.num_kv_heads} KV heads): QNN requires explicit "
@@ -118,24 +99,24 @@ class QNNBackend(BaseBackend):
         topology = self._build_topology(sig)
         topo_path.write_text(json.dumps(topology, indent=2))
 
-        # ── 2. Quantization profile ───────────────────────────────────────────
+        # ── 2. Quantization profile ──────────────────────────────────────────
         quant = self._build_quant_profile(sig)
         quant_path.write_text(json.dumps(quant, indent=2))
 
-        # ── 3. AI Hub job spec ────────────────────────────────────────────────
+        # ── 3. AI Hub job spec ───────────────────────────────────────────────
         aihub = self._build_aihub_job(sig, safe_name)
         aihub_path.write_text(json.dumps(aihub, indent=2))
 
-        # ── 4. Try remote AI Hub submission ──────────────────────────────────
-        aihub_job_id = None
+        # ── 4. Check AI Hub connectivity (no job is submitted) ───────────────
+        aihub_status = "not attempted (QAI_HUB_API_TOKEN not set)"
         api_token = os.environ.get("QAI_HUB_API_TOKEN", "")
         if api_token:
-            aihub_job_id = self._submit_aihub_job(sig, topology, api_token)
-            if aihub_job_id:
-                warnings.append(f"AI Hub job submitted: {aihub_job_id}")
+            aihub_status = self._check_aihub_connection(api_token)
+            warnings.append(f"AI Hub: {aihub_status}")
         else:
             warnings.append(
-                "Set QAI_HUB_API_TOKEN env var to submit to real Snapdragon hardware. "
+                "Set QAI_HUB_API_TOKEN env var to verify AI Hub connectivity. "
+                "Submit the generated job spec yourself with qai_hub.submit_compile_job. "
                 "Free account: https://aihub.qualcomm.com"
             )
 
@@ -145,8 +126,10 @@ class QNNBackend(BaseBackend):
             "aihub_job":     str(aihub_path),
             "qnn_dtype":     _QNN_DTYPE.get(sig.default_precision, "QNN_DATATYPE_FLOAT_16"),
             "htp_engine":    "Hexagon Tensor Processor (HTP)",
-            "aihub_job_id":  aihub_job_id or "not submitted",
+            "aihub_status":  aihub_status,
             "target_device": _AIHUB_DEVICES[0],
+            # informational, not a warning: nothing to act on
+            "layout_note":   "Transformer layout (batch, seq, hidden) is compatible with HTP; no NHWC transpose required",
         }
 
         return CompilationResult(
@@ -160,7 +143,7 @@ class QNNBackend(BaseBackend):
             metadata     = meta,
         )
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    # ── Helpers ──────────────────────────────────────────────────────────[...]
     def _build_topology(self, sig: ModelSignature) -> dict:
         """Build QnnGraph topology compatible with qnn-model-lib-generator."""
         qnn_dtype = _QNN_DTYPE.get(sig.default_precision, "QNN_DATATYPE_FLOAT_16")
@@ -240,152 +223,3 @@ class QNNBackend(BaseBackend):
                     "backendConfig": {"engine": engine},
                 })
 
-            k_input = f"layer_{i}_k_expanded" if is_gqa else f"layer_{i}_k_weight"
-            v_input = f"layer_{i}_v_expanded" if is_gqa else f"layer_{i}_v_weight"
-
-            # Attention node (uses expanded KV tensors)
-            nodes.append({
-                "name":        f"layer_{i}_self_attn",
-                "packageName": "qti.aisw",
-                "typeName":    "ScaledDotProductAttention",
-                "inputNames":  [
-                    f"layer_{i}_attn_in",
-                    f"layer_{i}_q_weight",
-                    k_input,
-                    v_input,
-                    f"layer_{i}_o_weight",
-                ],
-                "outputNames": [f"layer_{i}_attn_out"],
-                "params": {
-                    "num_heads":         sig.num_heads,
-                    "num_kv_heads":      sig.num_heads,   # after broadcast, both equal
-                    "head_dim":          head_dim,
-                    "scale":             round(1.0 / (head_dim ** 0.5), 6),
-                    "use_rope":          True,
-                    "gqa_unrolled":      is_gqa,
-                    "original_kv_heads": sig.num_kv_heads,
-                    "gqa_ratio":         gqa_ratio,
-                },
-                "backendConfig": {"engine": engine},
-            })
-
-            # MLP node
-            nodes.append({
-                "name":        f"layer_{i}_mlp",
-                "packageName": "qti.aisw",
-                "typeName":    "GatedMLP",
-                "inputNames":  [
-                    f"layer_{i}_mlp_in",
-                    f"layer_{i}_gate_weight",
-                    f"layer_{i}_up_weight",
-                    f"layer_{i}_down_weight",
-                ],
-                "outputNames": [f"layer_{i}_mlp_out"],
-                "params": {
-                    "hidden_size":   sig.hidden_size,
-                    "intermediate":  sig.hidden_size * 4,
-                    "activation":    "silu",
-                },
-                "backendConfig": {"engine": engine},
-            })
-
-        # LM head
-        nodes.append({
-            "name": "lm_head",
-            "packageName": "qti.aisw",
-            "typeName": "FullyConnected",
-            "inputNames": ["transformer_out", "lm_head_weight"],
-            "outputNames": ["logits"],
-            "params": {
-                "transpose_b": True,
-                "out_dims": [1, sig.max_seq_len, sig.vocab_size],
-            },
-            "backendConfig": {"engine": "QNN_BACKEND_HTP"},
-        })
-
-        return {
-            "msig_version": sig.msig_version,
-            "model_id":     sig.model_id,
-            "target":       "qnn",
-            "graph": {
-                "name":    sig.model_family or "transformer",
-                "version": "1.0.0",
-                "nodes":   nodes,
-                "tensors": tensors,
-            },
-            "backend_config": {
-                "htp_performance_mode": "BURST",
-                "htp_precision":         "fp16",
-                "spill_fill_bufsize":    128 * 1024 * 1024,  # 128 MB
-            },
-            "msig_layer_routing": {
-                "htp_layers":  int(sig.total_layers * sig.npu_split_ratio),
-                "cpu_layers":  len(sig.cpu_layers),
-                "split_ratio": sig.npu_split_ratio,
-            },
-            "content_hash": sig.content_hash,
-        }
-
-    def _build_quant_profile(self, sig: ModelSignature) -> dict:
-        """Per-layer quantization scale/offset vectors."""
-        layers_quant = []
-        for layer in sig.layers:
-            if layer.is_attention or layer.is_mlp:
-                layers_quant.append({
-                    "layer_name":      layer.name,
-                    "weight_dtype":    "int8" if sig.default_precision == Precision.INT8 else "float16",
-                    "activation_dtype":"float16",
-                    "scale_type":      "per_channel",
-                    "symmetric":       True,
-                    "quantize_node":   layer.tier != ExecutionTier.CPU_FALLBACK,
-                })
-
-        return {
-            "msig_version": sig.msig_version,
-            "model_id":     sig.model_id,
-            "quant_scheme": "uniform_symmetric",
-            "global_dtype": _QNN_DTYPE.get(sig.default_precision, "QNN_DATATYPE_FLOAT_16"),
-            "layers":       layers_quant,
-            "kv_cache": {
-                "dtype":           "QNN_DATATYPE_FLOAT_16",
-                "max_cache_bytes": sig.total_kv_cache_bytes,
-            },
-        }
-
-    def _build_aihub_job(self, sig: ModelSignature, safe_name: str) -> dict:
-        """Qualcomm AI Hub job spec for remote hardware testing."""
-        return {
-            "job_name":        f"msig-{safe_name}",
-            "model_id":        sig.model_id,
-            "task":            "inference",
-            "target_devices":  _AIHUB_DEVICES,
-            "input_specs":     [{"name": "input_ids", "shape": [1, 128], "dtype": "int32"}],
-            "options": {
-                "target_runtime": "onnx",
-                "quantize_full_type": "w8a16" if sig.default_precision == Precision.INT8 else "w4a16",
-                "quantize_weight_dtype": "int8" if sig.default_precision == Precision.INT8 else "int4",
-            },
-            "instructions": [
-                "1. Sign up free at https://aihub.qualcomm.com",
-                "2. pip install qai-hub",
-                "3. qai-hub configure --api_token YOUR_TOKEN",
-                "4. Use qai_hub.submit_compile_job() with this spec",
-                "5. Results run on real Snapdragon silicon in Qualcomm's cloud",
-            ],
-        }
-
-    def _submit_aihub_job(
-        self, sig: ModelSignature, topology: dict, api_token: str
-    ) -> str | None:
-        """Optionally submit to Qualcomm AI Hub if SDK + token available."""
-        try:
-            import qai_hub as hub  # type: ignore
-            hub.configure(api_token=api_token)
-            # For a real model we'd use hub.submit_compile_job(model, ...)
-            # Here we validate the connection works
-            devices = hub.get_devices()
-            if devices:
-                return f"aihub_dryrun_{sig.model_id[:20]}"
-        except Exception:
-            pass
-        return None
