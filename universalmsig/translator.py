@@ -146,7 +146,18 @@ class MSigTranslator:
             backend     = self._backends[name]
             backend_dir = out / name
             print(f"\n  [{name.upper()}] Compiling {sig.model_id} …")
-            result = backend.compile(sig, backend_dir, **kwargs)
+            try:
+                result = backend.compile(sig, backend_dir, **kwargs)
+            except Exception as e:  # a failing backend must not kill the run
+                result = CompilationResult(
+                    success      = False,
+                    backend_name = name,
+                    output_path  = str(backend_dir),
+                    asset_type   = "none",
+                    model_id     = sig.model_id,
+                    precision    = sig.default_precision.value,
+                    error        = f"{type(e).__name__}: {e}",
+                )
             results.append(result)
             print(result.summary())
         return results
