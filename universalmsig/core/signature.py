@@ -18,7 +18,6 @@ import struct
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 
 # ── Execution tier ────────────────────────────────────────────────────────────
@@ -79,6 +78,7 @@ class ModelSignature:
     architecture:    str   = ""          # "transformer-decoder"
     total_layers:    int   = 0
     hidden_size:     int   = 0
+    intermediate_size: int = 0           # MLP intermediate dim (0 = unknown)
     num_heads:       int   = 0
     num_kv_heads:    int   = 0
     vocab_size:      int   = 0
@@ -121,6 +121,19 @@ class ModelSignature:
         ]
 
     @property
+    def npu_block_count(self) -> int:
+        """Number of transformer BLOCKS on the fast tier, derived from the
+        per-layer tiers stored in this signature — the single source of truth.
+        Backends must use this instead of re-deriving the boundary from
+        npu_split_ratio (ceil vs int truncation gave different answers)."""
+        return len([l for l in self.npu_layers if l.is_attention])
+
+    @property
+    def cpu_block_count(self) -> int:
+        """Number of transformer BLOCKS on the CPU fallback tier."""
+        return len([l for l in self.cpu_layers if l.is_attention])
+
+    @property
     def transformer_layers(self) -> list[LayerSignature]:
         """All transformer sub-layers (attention + MLP), excluding embed and lm_head."""
         return [
@@ -145,6 +158,7 @@ class ModelSignature:
             "architecture":      self.architecture,
             "total_layers":      self.total_layers,
             "hidden_size":       self.hidden_size,
+            "intermediate_size": self.intermediate_size,
             "num_heads":         self.num_heads,
             "num_kv_heads":      self.num_kv_heads,
             "vocab_size":        self.vocab_size,
@@ -164,24 +178,60 @@ class ModelSignature:
     def save_json(self, path: str | Path) -> None:
         Path(path).write_text(self.to_json())
 
+    # 4-char binary tag for the 2.x header layout (msig_version "2.0.0")
+    _BINARY_VERSION = b"2.00"
+    _BINARY_STRUCT  = "=4sIIIIQ"
+
     def to_binary(self) -> bytes:
         """
-        Compact binary format compatible with the C firmware emulator.
-        Header: version(4) layers(4) hidden(4) heads(4) kv_heads(4) bpl(8) = 28 bytes
+        Compact binary header, 28 bytes:
+          version(4s) layers(I) hidden(I) heads(I) kv_heads(I) block_bytes(Q)
+
+        block_bytes is the weight size of ONE transformer block (first
+        attention + first MLP sub-layer) — NOT layers[0], which is the token
+        embedding table and was previously (and wrongly) written here.
         """
-        bpl = self.layers[0].weight_bytes if self.layers else 0
+        attn = next((l.weight_bytes for l in self.layers if l.is_attention), 0)
+        mlp  = next((l.weight_bytes for l in self.layers if l.is_mlp), 0)
         return struct.pack(
-            "=4sIIIIQ",
-            b"2.00",
+            self._BINARY_STRUCT,
+            self._BINARY_VERSION,
             self.total_layers,
             self.hidden_size,
             self.num_heads,
             self.num_kv_heads,
-            bpl,
+            attn + mlp,
         )
 
     def save_binary(self, path: str | Path) -> None:
         Path(path).write_bytes(self.to_binary())
+
+    @classmethod
+    def from_binary(cls, data: bytes) -> "ModelSignature":
+        """
+        Parse a 28-byte binary header back into a skeleton signature.
+        Only header-level fields are recoverable (no per-layer detail).
+        """
+        version, layers, hidden, heads, kv_heads, block_bytes = struct.unpack(
+            cls._BINARY_STRUCT, data[:28]
+        )
+        if version != cls._BINARY_VERSION:
+            raise ValueError(
+                f"Unsupported .msig binary version {version!r} "
+                f"(expected {cls._BINARY_VERSION!r})"
+            )
+        return cls(
+            total_layers = layers,
+            hidden_size  = hidden,
+            num_heads    = heads,
+            num_kv_heads = kv_heads,
+            notes        = (f"loaded from binary header; "
+                            f"block_bytes={block_bytes}, no per-layer detail"),
+        )
+
+    @classmethod
+    def load_binary(cls, path: str | Path) -> "ModelSignature":
+        return cls.from_binary(Path(path).read_bytes())
 
     @classmethod
     def from_dict(cls, d: dict) -> "ModelSignature":
@@ -210,6 +260,7 @@ class ModelSignature:
             architecture     = d.get("architecture", ""),
             total_layers     = d.get("total_layers", 0),
             hidden_size      = d.get("hidden_size", 0),
+            intermediate_size = d.get("intermediate_size", 0),
             num_heads        = d.get("num_heads", 0),
             num_kv_heads     = d.get("num_kv_heads", 0),
             vocab_size       = d.get("vocab_size", 0),

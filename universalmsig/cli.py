@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from .translator import MSigTranslator, list_supported_models
 from .core.parser import OFFLINE_SPECS
@@ -107,7 +106,8 @@ Examples:
         model_id, path = args.save_msig
         print(f"\nBuilding signature for {model_id} …")
         sig = translator.save_signature(model_id, path, precision=args.precision,
-                                        offline=not args.online)
+                                        npu_split_ratio=args.split,
+                                        max_seq_len=args.max_seq)
         print(sig.summary())
         print(f"\nSaved → {path}")
         return
@@ -118,12 +118,9 @@ Examples:
             print("ERROR: --dry-run requires --model")
             sys.exit(1)
         targets = None if args.target == "all" else [args.target]
-        try:
-            plan = translator.dry_run(args.model, targets=targets, precision=args.precision,
-                                      offline=not args.online)
-        except ValueError as e:
-            print(f"ERROR: {e}")
-            sys.exit(1)
+        plan = translator.dry_run(args.model, targets=targets, precision=args.precision,
+                                  npu_split_ratio=args.split,
+                                  max_seq_len=args.max_seq)
         if args.json_output:
             print(json.dumps(plan, indent=2))
         else:
@@ -135,8 +132,8 @@ Examples:
             for backend, info in plan["backends"].items():
                 print(f"  [{backend.upper()}]")
                 print(f"    Would produce : {info['would_produce']}")
-                print(f"    Fast layers   : {info['fast_layers']}")
-                print(f"    CPU layers    : {info['cpu_layers']}")
+                print(f"    Fast blocks   : {info['fast_blocks']}")
+                print(f"    CPU blocks    : {info['cpu_blocks']}")
                 print(f"    Weight        : {info['weight_gb']} GB")
                 print(f"    KV-cache      : {info['kv_cache_mb']} MB")
                 for w in info.get("warnings", []):
@@ -156,6 +153,9 @@ Examples:
     print("=" * 66)
 
     if args.file:
+        if args.precision != parser.get_default("precision"):
+            print("  note: --precision is ignored with --file — the precision "
+                  "stored in the .msig file is used")
         results = translator.translate_file(
             args.file, targets=targets, output_dir=args.out
         )

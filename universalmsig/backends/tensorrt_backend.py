@@ -100,12 +100,15 @@ class TensorRTBackend(BaseBackend):
         sdk_used = False
         try:
             import tensorrt as trt  # type: ignore
-            sdk_used = self._compile_engine(sig, engine_cfg, engine_path, trt)
         except ImportError:
             warnings.append(
                 "tensorrt SDK not found — config JSON produced (no .engine). "
                 "Install: pip install tensorrt  (requires NVIDIA GPU + CUDA)"
             )
+        else:
+            sdk_used, engine_err = self._compile_engine(sig, engine_cfg, engine_path, trt)
+            if not sdk_used:
+                warnings.append(f"TensorRT engine build failed: {engine_err}")
 
         meta = {
             "engine_config":   str(config_path),
@@ -195,15 +198,28 @@ class TensorRTBackend(BaseBackend):
             },
             "speculative_decoding": False,
             "msig_layer_split": {
-                "gpu_boundary": int(sig.total_layers * sig.npu_split_ratio),
-                "cpu_offload_layers": len(sig.cpu_layers),
+                # Derived from the per-layer tiers in the signature — do NOT
+                # recompute from the ratio (int() truncation disagreed with the
+                # parser's ceil() and shifted the boundary by one block).
+                "gpu_boundary_block": sig.npu_block_count,
+                "cpu_offload_blocks": sig.cpu_block_count,
             },
         }
 
     def _compile_engine(
         self, sig: ModelSignature, cfg: dict, engine_path: Path, trt: Any
-    ) -> bool:
-        """Attempt real TRT engine compilation using the SDK."""
+    ) -> tuple[bool, str]:
+        """
+        Attempt a minimal TRT engine build with the SDK.
+
+        Note: without real model weights this can only build a skeleton
+        network (input + identity + marked output) to validate the SDK
+        path — an empty network (the previous behaviour: one input, no
+        layers, no marked output) can never serialize, and the bare
+        `except: pass` hid that permanently.
+
+        Returns (success, error_message).
+        """
         try:
             logger  = trt.Logger(trt.Logger.WARNING)
             builder = trt.Builder(logger)
@@ -217,20 +233,14 @@ class TensorRTBackend(BaseBackend):
             elif sig.default_precision == Precision.INT8:
                 bconfig.set_flag(trt.BuilderFlag.INT8)
 
-            # Register inputs from signature
-            for layer in sig.layers:
-                if layer.is_embedding:
-                    network.add_input(
-                        "input_ids",
-                        trt.int32,
-                        (-1, -1),  # [batch, seq_len] dynamic
-                    )
-                    break
+            input_ids = network.add_input("input_ids", trt.int32, (-1, -1))
+            identity  = network.add_identity(input_ids)
+            network.mark_output(identity.get_output(0))
 
             engine_bytes = builder.build_serialized_network(network, bconfig)
             if engine_bytes:
                 engine_path.write_bytes(engine_bytes)
-                return True
-        except Exception:
-            pass
-        return False
+                return True, ""
+            return False, "builder.build_serialized_network returned no engine"
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
