@@ -1,3 +1,42 @@
+Metadata-Version: 2.4
+Name: universalmsig
+Version: 0.1.0
+Summary: Universal Model Signature (.msig) cross-vendor AI compiler: TensorRT, CoreML, QNN
+Author: Ashwin H
+License: Apache-2.0
+Project-URL: Homepage, https://github.com/ashwin9390/universalmsig
+Project-URL: Issues, https://github.com/ashwin9390/universalmsig/issues
+Keywords: ai,inference,tensorrt,coreml,qnn,nvidia,apple,qualcomm,llm,edge-ai
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Software Development :: Compilers
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Provides-Extra: tensorrt
+Requires-Dist: tensorrt>=10.0; extra == "tensorrt"
+Provides-Extra: coreml
+Requires-Dist: coremltools>=7.0; extra == "coreml"
+Requires-Dist: numpy; extra == "coreml"
+Provides-Extra: qnn
+Requires-Dist: qai-hub>=0.15; extra == "qnn"
+Provides-Extra: hf
+Requires-Dist: huggingface_hub>=0.23; extra == "hf"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
+Provides-Extra: all
+Requires-Dist: coremltools>=7.0; extra == "all"
+Requires-Dist: numpy; extra == "all"
+Requires-Dist: huggingface_hub>=0.23; extra == "all"
+Dynamic: license-file
+
 # universalmsig
 
 **Universal Model Signature (.msig) — Cross-vendor AI compiler.**
@@ -37,13 +76,11 @@ ONNX describes the raw compute graph; `.msig` maps **where each block should exe
 
 ---
 
-## 2. Test Environment
+## 2. Verified Deployment Environment
 
-- **Requirements**: Python 3.11+ only — the library and its full test suite run
-  offline on any machine, with **no GPU and no vendor SDKs** required.
-- Vendor SDK paths (TensorRT engine build, coremltools `.mlpackage`, Qualcomm
-  AI Hub) are optional extras; without them the backends emit config/spec JSON
-  and generated scripts.
+- **Hardware**: NVIDIA Tesla T4 GPU (16GB GDDR6)
+- **Compute**: CUDA Available (True)
+- **Platform**: Google Colab / Linux 6.1 / Python 3.12
 
 ---
 

@@ -9,7 +9,7 @@ description = "Universal Model Signature (.msig) cross-vendor AI compiler: Tenso
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
-authors = [{ name = "Ashwin H", url = "https://github.com/ashwin9390" }]
+authors = [{ name = "Ashwin H" }]
 keywords = ["ai", "inference", "tensorrt", "coreml", "qnn", "nvidia", "apple", "qualcomm", "llm", "edge-ai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
