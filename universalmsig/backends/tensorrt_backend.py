@@ -198,8 +198,11 @@ class TensorRTBackend(BaseBackend):
             },
             "speculative_decoding": False,
             "msig_layer_split": {
-                "gpu_boundary": int(sig.total_layers * sig.npu_split_ratio),
-                "cpu_offload_layers": len(sig.cpu_layers),
+                # Derived from the per-layer tiers in the signature — do NOT
+                # recompute from the ratio (int() truncation disagreed with the
+                # parser's ceil() and shifted the boundary by one block).
+                "gpu_boundary_block": sig.npu_block_count,
+                "cpu_offload_blocks": sig.cpu_block_count,
             },
         }
 

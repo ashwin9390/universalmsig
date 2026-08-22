@@ -216,8 +216,11 @@ class TestTensorRTBackend(unittest.TestCase):
     def test_dry_run(self):
         plan = self.backend.dry_run(self.sig)
         self.assertEqual(plan["backend"], "tensorrt")
-        self.assertIn("fast_layers", plan)
+        self.assertIn("fast_blocks", plan)
         self.assertIn("weight_gb", plan)
+        # blocks must sum to total transformer blocks — units must not mix
+        self.assertEqual(plan["fast_blocks"] + plan["cpu_blocks"],
+                         self.sig.total_layers)
 
     def test_compile_produces_files(self):
         with tempfile.TemporaryDirectory() as tmp:
