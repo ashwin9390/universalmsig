@@ -99,15 +99,15 @@ class QNNBackend(BaseBackend):
         topology = self._build_topology(sig)
         topo_path.write_text(json.dumps(topology, indent=2))
 
-        # ── 2. Quantization profile ───────────────────────────────────────────
+        # ── 2. Quantization profile ──────────────────────────────────────────
         quant = self._build_quant_profile(sig)
         quant_path.write_text(json.dumps(quant, indent=2))
 
-        # ── 3. AI Hub job spec ────────────────────────────────────────────────
+        # ── 3. AI Hub job spec ───────────────────────────────────────────────
         aihub = self._build_aihub_job(sig, safe_name)
         aihub_path.write_text(json.dumps(aihub, indent=2))
 
-        # ── 4. Check AI Hub connectivity (no job is submitted) ────────────────
+        # ── 4. Check AI Hub connectivity (no job is submitted) ───────────────
         aihub_status = "not attempted (QAI_HUB_API_TOKEN not set)"
         api_token = os.environ.get("QAI_HUB_API_TOKEN", "")
         if api_token:
@@ -129,8 +129,7 @@ class QNNBackend(BaseBackend):
             "aihub_status":  aihub_status,
             "target_device": _AIHUB_DEVICES[0],
             # informational, not a warning: nothing to act on
-            "layout_note":   "Transformer layout (batch, seq, hidden) is "
-                             "compatible with HTP; no NHWC transpose required",
+            "layout_note":   "Transformer layout (batch, seq, hidden) is compatible with HTP; no NHWC transpose required",
         }
 
         return CompilationResult(
